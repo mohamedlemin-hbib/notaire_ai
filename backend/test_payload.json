@@ -1,0 +1,6 @@
+{
+    "title": "Test de Vente",
+    "act_type": "vente",
+    "parties_info": {"vendeur": "M. X", "acheteur": "Mme Y"},
+    "special_clauses": "Clause de prix ferme"
+}
