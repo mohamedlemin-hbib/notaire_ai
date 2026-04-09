@@ -40,7 +40,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: const Color(0xFFF5F7FA), // Gris Clair Moderne
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(32),
@@ -53,15 +53,16 @@ class _LoginScreenState extends State<LoginScreen> {
                 "Notaire IA",
                 style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Color(0xFF1A237E)),
               ),
-              const Text("Accès Sécurisé pour Professionnels", style: TextStyle(color: Colors.grey)),
+              const Text("Accès Sécurisé Notarial", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.normal)),
               const SizedBox(height: 48),
               TextField(
                 controller: _emailController,
                 decoration: InputDecoration(
                   labelText: "Email",
-                  prefixIcon: const Icon(Icons.email_outlined),
+                  prefixIcon: const Icon(Icons.email_outlined, color: Color(0xFF1A237E)),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
+                style: const TextStyle(color: Colors.black),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -69,9 +70,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 obscureText: true,
                 decoration: InputDecoration(
                   labelText: "Mot de passe",
-                  prefixIcon: const Icon(Icons.lock_outline),
+                  prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF1A237E)),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
+                style: const TextStyle(color: Colors.black),
               ),
               const SizedBox(height: 32),
               SizedBox(
@@ -82,7 +84,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF1A237E),
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleRectangle(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   child: _isLoading 
                     ? const CircularProgressIndicator(color: Colors.white) 

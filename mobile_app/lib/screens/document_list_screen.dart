@@ -77,7 +77,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
                   onTap: () {
                     final pdfUrl = doc['pdf_url'];
                     if (pdfUrl != null) {
-                      final fullUrl = "http://10.0.2.2:8000$pdfUrl";
+                      final fullUrl = ApiService.getFullUrl(pdfUrl);
                       Navigator.push(
                         context,
                         MaterialPageRoute(

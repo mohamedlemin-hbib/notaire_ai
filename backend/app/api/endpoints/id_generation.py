@@ -107,7 +107,11 @@ async def generate_from_ids(
         raise
     except Exception as e:
         import traceback
-        print(f"Erreur generate_from_ids: {traceback.format_exc()}")
+        err_str = traceback.format_exc()
+        try:
+            print(f"Erreur generate_from_ids: {err_str}")
+        except:
+            print(f"Erreur generate_from_ids: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -3,25 +3,43 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html show window;
 
 class ApiService {
-  static const String baseUrl =
-      kIsWeb ? "http://localhost:8000/api/v1" : "http://10.0.2.2:8000/api/v1";
-  static const String baseOrigin =
-      kIsWeb ? "http://localhost:8000" : "http://10.0.2.2:8000";
+  static String baseUrl = kIsWeb
+      ? "http://localhost:8000/api/v1"
+      : (defaultTargetPlatform == TargetPlatform.android
+          ? "http://10.0.2.2:8000/api/v1"
+          : "http://localhost:8000/api/v1");
+
+  static String baseOrigin = kIsWeb
+      ? "http://localhost:8000"
+      : (defaultTargetPlatform == TargetPlatform.android
+          ? "http://10.0.2.2:8000"
+          : "http://localhost:8000");
 
   static const _storage = FlutterSecureStorage();
   static String? _token;
   static String? _notaryName;
+  static String? _userRole;
 
   static String? get notaryName => _notaryName;
   static bool get isAuthenticated => _token != null;
+  static bool get isAdmin => _userRole == 'admin';
 
   static Future<void> init() async {
-    _token = await _storage.read(key: 'auth_token');
-    _notaryName = await _storage.read(key: 'notary_name');
+    if (kIsWeb) {
+      _token = html.window.localStorage['auth_token'];
+      _notaryName = html.window.localStorage['notary_name'];
+      _userRole = html.window.localStorage['user_role'];
+    } else {
+      _token = await _storage.read(key: 'auth_token');
+      _notaryName = await _storage.read(key: 'notary_name');
+      _userRole = await _storage.read(key: 'user_role');
+    }
     if (kDebugMode) {
-      print("DEBUG: ApiService initialized. Token found: ${_token != null}");
+      print("DEBUG: ApiService initialized. Token found: ${_token != null}, Role: $_userRole");
     }
   }
 
@@ -66,8 +84,16 @@ class ApiService {
       final data = json.decode(response.body);
       _token = data['access_token'];
       _notaryName = data['user']['full_name'];
-      await _storage.write(key: 'auth_token', value: _token);
-      await _storage.write(key: 'notary_name', value: _notaryName);
+      _userRole = data['user']['role']?.toString();
+      if (kIsWeb) {
+        html.window.localStorage['auth_token'] = _token ?? '';
+        html.window.localStorage['notary_name'] = _notaryName ?? '';
+        html.window.localStorage['user_role'] = _userRole ?? '';
+      } else {
+        await _storage.write(key: 'auth_token', value: _token);
+        await _storage.write(key: 'notary_name', value: _notaryName);
+        await _storage.write(key: 'user_role', value: _userRole);
+      }
       return true;
     }
     return false;
@@ -76,8 +102,16 @@ class ApiService {
   static Future<void> logout() async {
     _token = null;
     _notaryName = null;
-    await _storage.delete(key: 'auth_token');
-    await _storage.delete(key: 'notary_name');
+    _userRole = null;
+    if (kIsWeb) {
+      html.window.localStorage.remove('auth_token');
+      html.window.localStorage.remove('notary_name');
+      html.window.localStorage.remove('user_role');
+    } else {
+      await _storage.delete(key: 'auth_token');
+      await _storage.delete(key: 'notary_name');
+      await _storage.delete(key: 'user_role');
+    }
   }
 
   // ── Chat Sessions ─────────────────────────────────────────────────────────
@@ -263,5 +297,67 @@ class ApiService {
 
     if (response.statusCode == 200) return json.decode(response.body);
     throw Exception('Erreur lors de l\'upload du modèle : ${response.body}');
+  }
+
+  // ── User Management ───────────────────────────────────────────────────────
+
+  static Future<Map<String, dynamic>> getMe() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/auth/me'),
+      headers: _getHeaders(),
+    );
+    if (response.statusCode == 200) {
+      return json.decode(utf8.decode(response.bodyBytes));
+    }
+    throw Exception('Erreur lors de la récupération du profil');
+  }
+
+  static Future<bool> register(Map<String, dynamic> userData) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/register'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode(userData),
+    );
+    return response.statusCode == 200;
+  }
+
+  static Future<List<dynamic>> getUsers() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/admin/users'),
+      headers: _getHeaders(),
+    );
+    if (response.statusCode == 200) {
+      return json.decode(utf8.decode(response.bodyBytes));
+    }
+    return [];
+  }
+
+  static Future<Map<String, dynamic>> createUser(Map<String, dynamic> userData) async {
+    if (kDebugMode) print('DEBUG createUser: token=$_token, url=$baseUrl/admin/users');
+    final response = await http.post(
+      Uri.parse('$baseUrl/admin/users'),
+      headers: _getHeaders(true),
+      body: json.encode(userData),
+    );
+    if (kDebugMode) print('DEBUG createUser response: ${response.statusCode} ${response.body}');
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return {'success': true};
+    }
+    String errorMsg = 'Erreur ${response.statusCode}';
+    try {
+      final decoded = json.decode(utf8.decode(response.bodyBytes));
+      if (decoded is Map && decoded.containsKey('detail')) {
+        errorMsg = decoded['detail'].toString();
+      }
+    } catch (_) {}
+    return {'success': false, 'error': errorMsg};
+  }
+
+  static Future<bool> deleteUser(int userId) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/admin/users/$userId'),
+      headers: _getHeaders(),
+    );
+    return response.statusCode == 200;
   }
 }

@@ -61,3 +61,12 @@ def create_act_draft(
         trace = traceback.format_exc()
         db.rollback()
         raise HTTPException(status_code=500, detail=f"{str(e)} | Traceback: {trace}")
+@router.get("/download/demo_act.pdf")
+def download_demo_act():
+    from fastapi.responses import FileResponse
+    import os
+    # On renvoie l'acte de démonstration que je viens de générer
+    demo_path = "acte_final_demonstration.pdf"
+    if os.path.exists(demo_path):
+        return FileResponse(demo_path, media_type="application/pdf", filename="acte_de_vente_demo.pdf")
+    raise HTTPException(status_code=404, detail="Fichier de démonstration non trouvé")

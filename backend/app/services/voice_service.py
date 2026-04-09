@@ -1,4 +1,4 @@
-import google.generativeai as genai
+from google import genai
 from app.core.config import settings
 import os
 
@@ -9,9 +9,8 @@ def transcribe_voice_message(audio_bytes: bytes, mime_type: str = "audio/mpeg") 
     if settings.GOOGLE_API_KEY == "your_google_api_key_here":
         return {"text": "Simulation: Crée un acte de vente.", "intent": "generation_acte"}
 
-    genai.configure(api_key=settings.GOOGLE_API_KEY)
-    model = genai.GenerativeModel('gemini-2.0-flash')
-
+    client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+    
     prompt = """
     Écoute ce message vocal de notaire. 
     1. Transcris le texte exactement.
@@ -25,14 +24,23 @@ def transcribe_voice_message(audio_bytes: bytes, mime_type: str = "audio/mpeg") 
     }
     """
 
-    # Gemini can take raw bytes for audio
-    response = model.generate_content([
-        prompt,
-        {
-            "mime_type": mime_type,
-            "data": audio_bytes
-        }
-    ])
+    try:
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=[
+                prompt,
+                {"mime_type": mime_type, "data": audio_bytes}
+            ]
+        )
+    except Exception as e:
+        # Fallback if gemini-3 fails
+        response = client.models.generate_content(
+            model="gemini-flash-latest",
+            contents=[
+                prompt,
+                {"mime_type": mime_type, "data": audio_bytes}
+            ]
+        )
 
     try:
         import json

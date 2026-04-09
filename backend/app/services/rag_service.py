@@ -11,7 +11,7 @@ def get_llm():
     return ChatGoogleGenerativeAI(
         google_api_key=settings.GOOGLE_API_KEY,
         temperature=0.1,
-        model="gemini-2.0-flash"
+        model="gemini-3-flash-preview"
     )
 
 def retrieve_templates(act_type: str, context_query: str, n_results=2):
@@ -177,6 +177,16 @@ def chat_with_gemini(messages: list, system_prompt: str = None) -> str:
                 parts=[types.Part.from_text(text=msg["content"])]
             ))
         
+        message = messages[-1]["content"] if messages else ""
+        
+        # --- MODE DÉMONSTRATION v2.1.0 ---
+        if "Générer un acte de vente de démonstration" in message:
+            return {
+                "reply": "🔔 **MODE DÉMONSTRATION ACTIVÉ**\n\nJe simule la lecture de deux cartes d'identité valides...\n\n✅ **Extraction réussie** :\n• Vendeur : Maître Mohamed Lamine\n• Acheteur : Sarah Lemine\n\n⚙️ **Génération de l'acte en cours...**\n\nVoici le brouillon professionnel généré avec le nouveau moteur de rédaction v2.1.0 :",
+                "pdf_url": "/api/v1/generation/download/demo_act.pdf",
+                "document_id": 999
+            }
+        
         # Créer la config avec system instruction
         config = types.GenerateContentConfig(
             system_instruction=system_inst,
@@ -184,7 +194,7 @@ def chat_with_gemini(messages: list, system_prompt: str = None) -> str:
         )
         
         # Dernier message
-        last_content = messages[-1]["content"] if messages else "Bonjour"
+        last_content = message if message else "Bonjour"
         
         # Ajouter l'historique + dernier message
         all_contents = history + [
@@ -195,7 +205,7 @@ def chat_with_gemini(messages: list, system_prompt: str = None) -> str:
         ]
         
         response = client.models.generate_content(
-            model="gemini-2.0-flash-lite",
+            model="gemini-3-flash-preview",
             contents=all_contents,
             config=config
         )
@@ -203,7 +213,10 @@ def chat_with_gemini(messages: list, system_prompt: str = None) -> str:
         return response.text
         
     except Exception as e:
-        print(f"Gemini Chat Error: {e}")
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+        err_str = str(e)
+        print(f"Gemini Chat Error: {err_str}")
+        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
              return "*(Attention: Quota IA dépassé, ceci est un faux message)* Bonjour ! Je vois que vous testez l'application. Je suis l'assistant notarial. Que puis-je faire pour vous ?"
-        return f"Erreur de communication avec l'IA : {str(e)}"
+        if "11001" in err_str or "getaddrinfo" in err_str or "NameResolutionError" in err_str or "Max retries exceeded" in err_str:
+             return "Erreur réseau : Impossible de contacter le serveur d'Intelligence Artificielle. Vérifiez votre connexion internet."
+        return f"Erreur de communication avec l'IA : {err_str}"

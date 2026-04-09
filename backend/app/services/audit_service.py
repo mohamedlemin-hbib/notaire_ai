@@ -10,7 +10,7 @@ def get_audit_llm():
     return ChatGoogleGenerativeAI(
         google_api_key=settings.GOOGLE_API_KEY,
         temperature=0.0,
-        model="gemini-flash-latest" # unified with Gemini 3 Flash
+        model="gemini-3-flash-preview"
     )
 
 def run_compliance_audit(db: Session, document_id: int):

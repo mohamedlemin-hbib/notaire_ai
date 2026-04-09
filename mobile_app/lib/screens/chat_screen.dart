@@ -9,13 +9,14 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-/// ── Constantes de design ───────────────────────────────────────────────────
-const kNavy = Color(0xFF0D1B4B);
-const kGold = Color(0xFFB8860B);
-const kBgGrey = Color(0xFFF4F6FA);
+/// ── Constantes de design (Style Gemini Moderne) ──────────────────────────────
+const kPrimaryColor = Color(0xFF1A237E);
+const kNavy = Color(0xFF1A237E); // Ajout de la constante kNavy manquante
+const kBgLight = Color(0xFFF1F4F9); // Fond Gemini Authentique
 const kWhite = Colors.white;
-const kUserBubble = Color(0xFFE8EAF6);
+const kUserBubble = Color(0xFFE7F0FF);
 const kAiBubble = Colors.white;
+const kAccentColor = Color(0xFFC5A059);
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -465,7 +466,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final notaryName = ApiService.notaryName ?? "Maître";
 
     return Scaffold(
-      backgroundColor: kBgGrey,
+      backgroundColor: kBgLight,
       drawer: _buildDrawer(),
       appBar: _buildAppBar(),
       body: Column(
@@ -485,52 +486,25 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
       elevation: 0,
-      backgroundColor: kNavy,
-      foregroundColor: kWhite,
-      title: Row(
-        children: [
-          const Icon(Icons.auto_awesome, color: kGold, size: 20),
-          const SizedBox(width: 8),
-          const Text("Agentic Notary",
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(width: 8),
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: Colors.green.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Text("Gemini 2.0",
-                style: TextStyle(fontSize: 10, color: Colors.greenAccent)),
-          ),
-        ],
-      ),
+      backgroundColor: Colors.transparent,
+      iconTheme: const IconThemeData(color: Colors.black87),
+      title: const SizedBox.shrink(), // Le titre est dans l'écran d'accueil
+      centerTitle: true,
       actions: [
         Padding(
           padding: const EdgeInsets.only(right: 16.0),
-          child: PopupMenuButton<String>(
-            onSelected: (value) {
-              if (value == 'logout') _handleLogout();
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                  value: 'profile',
-                  child: ListTile(
-                      leading: Icon(Icons.person),
-                      title: Text("Mon Profil"),
-                      dense: true)),
-              const PopupMenuItem(
-                  value: 'logout',
-                  child: ListTile(
-                      leading: Icon(Icons.logout, color: Colors.red),
-                      title: Text("Déconnexion",
-                          style: TextStyle(color: Colors.red)),
-                      dense: true)),
-            ],
-            child: CircleAvatar(
-              backgroundColor: Colors.white.withOpacity(0.15),
-              child: const Icon(Icons.person, color: kWhite, size: 20),
+          child: InkWell(
+            onTap: () => Navigator.pushNamed(context, '/profile'),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.black12, width: 1),
+              ),
+              child: CircleAvatar(
+                radius: 18,
+                backgroundColor: Colors.grey[200],
+                backgroundImage: const NetworkImage("https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y"),
+              ),
             ),
           ),
         ),
@@ -561,6 +535,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.person_outline, color: kNavy),
+            title: const Text("Mon Profil"),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/profile');
+            },
+          ),
+          ListTile(
             leading:
                 const Icon(Icons.folder_outlined, color: kNavy),
             title: const Text("Mes Actes"),
@@ -569,6 +551,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               Navigator.pushNamed(context, '/documents');
             },
           ),
+          if (ApiService.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.people_outline, color: kNavy),
+              title: const Text("Gestion des Notaires"),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/admin/users');
+              },
+            ),
           const Divider(),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -631,18 +622,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 20),
+            const SizedBox(height: 10),
             Text("Bonjour $name,",
                 style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w300,
-                    color: Colors.blueGrey)),
+                    fontSize: 24,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black54)),
             const Text("Par où commencer ?",
                 style: TextStyle(
-                    fontSize: 30,
+                    fontSize: 32,
                     fontWeight: FontWeight.bold,
-                    color: kNavy)),
-            const SizedBox(height: 40),
+                    color: Colors.black87)),
+            const SizedBox(height: 30),
             _buildActionCard(
               Icons.camera_alt_outlined,
               "Générer un acte de vente",
@@ -664,6 +655,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   _sendMessage("Bonjour Maître, comment puis-je vous aider ?"),
               badgeText: "Gemini",
             ),
+            const SizedBox(height: 20),
+            _buildActionCard(
+              Icons.bolt_rounded,
+              "🚀 TEST RAPIDE (DÉMO)",
+              "Générer un acte instantanément (Simulation).",
+              onTap: () => _sendMessage("Générer un acte de vente de démonstration"),
+              badgeText: "V2.1",
+            ),
           ],
         ),
       ),
@@ -674,64 +673,25 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       {VoidCallback? onTap, String? badgeText}) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(20),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.all(18),
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         decoration: BoxDecoration(
           color: kWhite,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 12,
-                offset: const Offset(0, 4))
-          ],
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.black.withOpacity(0.03)),
         ),
         child: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                  color: kNavy.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(12)),
-              child: Icon(icon, color: kNavy, size: 26),
-            ),
+            Icon(icon, color: Colors.black54, size: 24),
             const SizedBox(width: 16),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(title,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15)),
-                      if (badgeText != null) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                              color: kGold.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(8)),
-                          child: Text(badgeText,
-                              style: const TextStyle(
-                                  fontSize: 9,
-                                  color: kGold,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                      ]
-                    ],
-                  ),
-                  const SizedBox(height: 3),
-                  Text(subtitle,
-                      style:
-                          const TextStyle(color: Colors.grey, fontSize: 12)),
-                ],
-              ),
+              child: Text(title,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w500, fontSize: 16, color: Colors.black87)),
             ),
-            const Icon(Icons.chevron_right, color: Colors.grey),
+            const Icon(Icons.chevron_right, color: Colors.black26, size: 20),
           ],
         ),
       ),
@@ -796,61 +756,46 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   Widget _buildInputBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: kWhite,
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 10,
-              offset: const Offset(0, -3))
-        ],
-      ),
-      child: SafeArea(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      decoration: const BoxDecoration(color: Colors.transparent),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE9EEF6), // Fond capsule Gemini
+          borderRadius: BorderRadius.circular(30),
+        ),
         child: Row(
           children: [
             IconButton(
-              icon: const Icon(Icons.attach_file, color: Colors.blueGrey),
+              icon: const Icon(Icons.add, color: Colors.black54),
               onPressed: _showAttachmentMenu,
-              tooltip: "Joindre une pièce d'identité",
             ),
-            Expanded(
-              child: TextField(
-                controller: _controller,
-                maxLines: null,
-                textInputAction: TextInputAction.send,
-                onSubmitted: _sendMessage,
-                decoration: InputDecoration(
-                  hintText: "Demandez à votre assistant notarial…",
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(30),
-                    borderSide: BorderSide.none,
-                  ),
-                  filled: true,
-                  fillColor: kBgGrey,
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 10),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
             IconButton(
-              icon: Icon(
-                  _isRecording ? Icons.stop_circle : Icons.mic_none_outlined,
-                  color: _isRecording ? Colors.red : Colors.blueGrey),
-              onPressed: _toggleRecording,
-              tooltip: _isRecording
-                  ? "Arrêter l'enregistrement"
-                  : "Message vocal",
+              icon: const Icon(Icons.tune_rounded, color: Colors.black54),
+              onPressed: () {},
             ),
-            const SizedBox(width: 4),
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: kNavy,
-              child: IconButton(
-                icon: const Icon(Icons.send, size: 18, color: Colors.white),
-                onPressed: () => _sendMessage(_controller.text),
+            const Spacer(),
+            InkWell(
+              onTap: () => _sendMessage("Générer un acte de vente de démonstration"),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: kWhite,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.black12),
+                ),
+                child: const Text("Rapide",
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
               ),
+            ),
+            IconButton(
+              icon: Icon(_isRecording ? Icons.stop : Icons.mic_none_rounded,
+                  color: _isRecording ? Colors.red : Colors.black54),
+              onPressed: _toggleRecording,
+            ),
+            IconButton(
+              icon: const Icon(Icons.auto_awesome_rounded, color: Colors.black54),
+              onPressed: () => _sendMessage(_controller.text),
             ),
           ],
         ),
@@ -877,7 +822,7 @@ class _CompletionDialog extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: const Row(
         children: [
-          Icon(Icons.edit_document, color: kNavy),
+          Icon(Icons.edit_document, color: kPrimaryColor),
           SizedBox(width: 10),
           Expanded(
             child: Text("Compléter l'acte de vente",
@@ -920,13 +865,13 @@ class _CompletionDialog extends StatelessWidget {
                       labelText: fieldName,
                       hintText: hint,
                       prefixIcon: Icon(_getIcon(fieldName),
-                          color: kNavy, size: 20),
+                          color: kPrimaryColor, size: 20),
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12)),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide:
-                            const BorderSide(color: kNavy, width: 2),
+                            const BorderSide(color: kPrimaryColor, width: 2),
                       ),
                     ),
                   ),
@@ -957,7 +902,7 @@ class _CompletionDialog extends StatelessWidget {
           icon: const Icon(Icons.check, size: 16),
           label: const Text("Finaliser l'acte"),
           style: ElevatedButton.styleFrom(
-            backgroundColor: kNavy,
+            backgroundColor: kPrimaryColor,
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12)),
@@ -1019,7 +964,7 @@ class _ChatBubble extends StatelessWidget {
           if (!isUser) ...[
             const CircleAvatar(
               radius: 15,
-              backgroundColor: kNavy,
+              backgroundColor: kPrimaryColor,
               child:
                   Icon(Icons.auto_awesome, size: 12, color: Colors.white),
             ),
@@ -1083,7 +1028,7 @@ class _ChatBubble extends StatelessWidget {
                           label: const Text("Voir PDF",
                               style: TextStyle(fontSize: 12)),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: kNavy,
+                            backgroundColor: kPrimaryColor,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 14, vertical: 8),
@@ -1111,7 +1056,7 @@ class _ChatBubble extends StatelessWidget {
               radius: 15,
               backgroundColor: Colors.blueGrey.shade100,
               child:
-                  const Icon(Icons.person, size: 14, color: kNavy),
+                  const Icon(Icons.person, size: 14, color: kPrimaryColor),
             ),
           ],
         ],

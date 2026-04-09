@@ -21,7 +21,7 @@ app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin Management
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(admin_rag.router, prefix="/api/v1/admin", tags=["RAG Management"])
 app.include_router(id_generation.router, prefix="/api/v1/id-processing", tags=["ID Processing"])
-app.include_router(multimodal.router, prefix="/api/v1/multimodal", tags=["Multimodal Features"])
+# app.include_router(multimodal.router, prefix="/api/v1/multimodal", tags=["Multimodal Features"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat History"])
 
 @app.get("/")

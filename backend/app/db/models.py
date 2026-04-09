@@ -29,6 +29,9 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     full_name = Column(String)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    birth_date = Column(String, nullable=True) # ISO format or string
     bureau = Column(String, nullable=True)
     role = Column(Enum(UserRole), default=UserRole.CLERC)
     is_active = Column(Integer, default=1) # 1 for True, 0 for False (using Integer for compatibility)

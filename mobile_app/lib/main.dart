@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:mobile_app/screens/chat_screen.dart';
 import 'package:mobile_app/screens/login_screen.dart';
 import 'package:mobile_app/screens/document_list_screen.dart';
+import 'package:mobile_app/screens/profile_screen.dart';
+import 'package:mobile_app/screens/user_management_screen.dart';
+import 'package:mobile_app/screens/add_user_screen.dart';
 import 'package:mobile_app/services/api_service.dart';
 
 void main() async {
@@ -37,6 +40,9 @@ class NotaireAIApp extends StatelessWidget {
         '/': (context) => const LoginScreen(),
         '/chat': (context) => const ChatScreen(),
         '/documents': (context) => const DocumentListScreen(),
+        '/profile': (context) => const ProfileScreen(),
+        '/admin/users': (context) => const UserManagementScreen(),
+        '/admin/users/add': (context) => const AddUserScreen(),
       },
     );
   }

@@ -7,6 +7,8 @@ from app.db.session import get_db
 from app.db.models import User
 from app.core import security
 from app.core.config import settings
+from app.schemas.user import UserCreate, UserOut
+from app.api.deps import get_current_user
 
 router = APIRouter()
 
@@ -45,3 +47,10 @@ def login(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = 
             "role": user.role
         }
     }
+
+@router.get("/me", response_model=UserOut)
+def get_me(current_user: User = Depends(get_current_user)):
+    """
+    Récupère les informations de l'utilisateur connecté.
+    """
+    return current_user
