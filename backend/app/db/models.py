@@ -6,7 +6,11 @@ import enum
 from app.db.base import Base
 
 class ActType(str, enum.Enum):
-    VENTE = "vente"
+    VENTE = "vente" # Legacy/Generic
+    VENTE_IMMOBILIER = "vente_immobilier"
+    VENTE_VEHICULE = "vente_vehicule"
+    VENTE_SOCIETE = "vente_societe"
+    MARIAGE = "mariage"
     TESTAMENT = "testament"
     PROCURATION = "procuration"
     AUTRE = "autre"
@@ -33,6 +37,7 @@ class User(Base):
     last_name = Column(String, nullable=True)
     birth_date = Column(String, nullable=True) # ISO format or string
     bureau = Column(String, nullable=True)
+    nni = Column(String, unique=True, index=True, nullable=True) # Numéro National d'Identité
     role = Column(Enum(UserRole), default=UserRole.CLERC)
     is_active = Column(Integer, default=1) # 1 for True, 0 for False (using Integer for compatibility)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

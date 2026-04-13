@@ -127,9 +127,6 @@ def _build_status_stamp(status: str) -> list:
     if status == "valide":
         color = GREEN_SEAL
         label = "✓  ACTE VALIDÉ"
-    elif status == "brouillon":
-        color = RED_SEAL
-        label = "⚠  BROUILLON — NON DÉFINITIF"
     else:
         return []
 
@@ -148,8 +145,8 @@ def _build_status_stamp(status: str) -> list:
     return [table, Spacer(1, 10)]
 
 
-def _build_signature_block(styles) -> list:
-    """Bloc de signatures professionnel à 3 colonnes."""
+def _build_signature_block(styles, act_type: str = "vente_immobilier") -> list:
+    """Bloc de signatures professionnel à 3 colonnes, adapté au type d'acte."""
     elements = []
     elements.append(Spacer(1, 30))
     elements.append(HRFlowable(width="100%", thickness=0.5, color=MED_GREY))
@@ -160,10 +157,28 @@ def _build_signature_block(styles) -> list:
     line_style = ParagraphStyle("Line", fontName="Helvetica",
                                 fontSize=9, alignment=TA_CENTER, textColor=MED_GREY)
 
+    # Détection automatique basée sur le contenu (fallback)
+    content_str = str(elements).upper() if elements else ""
+    is_marriage_content = any(k in content_str for k in ["ÉPOUX", "ÉPOUSE", "WALI", "DOT (MAHR)", "MARIAGE"])
+
+    # Définition des labels selon le type d'acte
+    label_p1 = "LE VENDEUR"
+    label_p2 = "L'ACHETEUR"
+
+    if act_type == "mariage" or is_marriage_content:
+        label_p1 = "MONSIEUR"
+        label_p2 = "MADAME"
+    elif act_type == "vente_societe":
+        label_p1 = "LE CÉDANT"
+        label_p2 = "LE CESSIONNAIRE"
+    elif act_type == "testament":
+        label_p1 = "LE TESTATEUR"
+        label_p2 = "LES TÉMOINS"
+
     sig_data = [
-        [Paragraph("LE VENDEUR", sig_style),
+        [Paragraph(label_p1, sig_style),
          Paragraph("LE NOTAIRE", sig_style),
-         Paragraph("L'ACHETEUR", sig_style)],
+         Paragraph(label_p2, sig_style)],
         [Paragraph("Signature & Cachet", line_style),
          Paragraph("Signature & Cachet Officiel", line_style),
          Paragraph("Signature & Cachet", line_style)],
@@ -202,7 +217,8 @@ def generate_act_pdf(
     act_number: str = "----",
     notary_name: str = "............",
     notary_bureau: str = "............",
-    status: str = "brouillon"
+    status: str = "brouillon",
+    act_type: str = "vente_immobilier"
 ) -> io.BytesIO:
     """
     Génère un PDF professionnel notarial avec en-tête officielle,
@@ -226,8 +242,27 @@ def generate_act_pdf(
     # ── En-tête ──────────────────────────────────────────────────────────────
     elements.extend(_build_header(styles, notary_name, notary_bureau))
 
-    # ── Titre de l'acte ──────────────────────────────────────────────────────
-    elements.append(Paragraph("ACTE DE VENTE IMMOBILIÈRE", styles["act_title"]))
+    # ── Titre de l'acte dynamique ─────────────────────────────────────────────
+    # Mapping des titres selon le type d'acte
+    titles_map = {
+        "mariage": "ACTE DE MARIAGE",
+        "vente_immobilier": "ACTE DE VENTE IMMOBILIÈRE",
+        "vente_vehicule": "ACTE DE VENTE DE VÉHICULE",
+        "vente_societe": "ACTE DE CESSION DE PARTS SOCIALES",
+        "testament": "ACTE DE TESTAMENT",
+        "procuration": "PROCURATION NOTARIÉE"
+    }
+    
+    # On normalise act_type en minuscule pour le mapping
+    norm_type = (act_type or "").lower()
+    
+    # Sécurité supplémentaire : détection par contenu pour le titre
+    if "mariage" in content.lower() or "époux" in content.lower():
+        norm_type = "mariage"
+        
+    display_title = titles_map.get(norm_type, "ACTE NOTARIÉ")
+    
+    elements.append(Paragraph(display_title, styles["act_title"]))
     elements.append(Paragraph(f"Acte N° {act_number}", styles["act_number"]))
     elements.append(HRFlowable(width="100%", thickness=1.5, color=NAVY))
     elements.append(Spacer(1, 10))
@@ -296,7 +331,7 @@ def generate_act_pdf(
             elements.append(KeepTogether(block))
 
     # ── Signatures ────────────────────────────────────────────────────────────
-    elements.extend(_build_signature_block(styles))
+    elements.extend(_build_signature_block(styles, act_type=act_type))
 
     # ── Pied de page ──────────────────────────────────────────────────────────
     elements.extend(_build_footer(styles, act_number))

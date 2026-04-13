@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'add_user_screen.dart';
 
 class UserManagementScreen extends StatefulWidget {
   const UserManagementScreen({super.key});
@@ -84,9 +85,21 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                         ),
                         title: Text(user['full_name'] ?? user['email']),
                         subtitle: Text("${user['email']} - ${user['role']}"),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () => _confirmDelete(user['id']),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit, color: Colors.blue),
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => AddUserScreen(user: user)),
+                              ).then((_) => _fetchUsers()),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () => _confirmDelete(user['id']),
+                            ),
+                          ],
                         ),
                       ),
                     );

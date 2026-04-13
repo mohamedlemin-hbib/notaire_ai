@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from app.db.models import UserRole
 
@@ -9,6 +9,7 @@ class UserBase(BaseModel):
     full_name: Optional[str] = None
     birth_date: Optional[str] = None
     bureau: Optional[str] = None
+    nni: Optional[str] = Field(None, pattern=r"^\d{10}$", description="Le NNI doit comporter exactement 10 chiffres")
     role: UserRole = UserRole.NOTAIRE
 
 class UserCreate(UserBase):

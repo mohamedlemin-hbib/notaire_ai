@@ -3,8 +3,6 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html show window;
 
 class ApiService {
   static String baseUrl = kIsWeb
@@ -29,15 +27,10 @@ class ApiService {
   static bool get isAdmin => _userRole == 'admin';
 
   static Future<void> init() async {
-    if (kIsWeb) {
-      _token = html.window.localStorage['auth_token'];
-      _notaryName = html.window.localStorage['notary_name'];
-      _userRole = html.window.localStorage['user_role'];
-    } else {
-      _token = await _storage.read(key: 'auth_token');
-      _notaryName = await _storage.read(key: 'notary_name');
-      _userRole = await _storage.read(key: 'user_role');
-    }
+    _token = await _storage.read(key: 'auth_token');
+    _notaryName = await _storage.read(key: 'notary_name');
+    _userRole = await _storage.read(key: 'user_role');
+    
     if (kDebugMode) {
       print("DEBUG: ApiService initialized. Token found: ${_token != null}, Role: $_userRole");
     }
@@ -85,15 +78,11 @@ class ApiService {
       _token = data['access_token'];
       _notaryName = data['user']['full_name'];
       _userRole = data['user']['role']?.toString();
-      if (kIsWeb) {
-        html.window.localStorage['auth_token'] = _token ?? '';
-        html.window.localStorage['notary_name'] = _notaryName ?? '';
-        html.window.localStorage['user_role'] = _userRole ?? '';
-      } else {
-        await _storage.write(key: 'auth_token', value: _token);
-        await _storage.write(key: 'notary_name', value: _notaryName);
-        await _storage.write(key: 'user_role', value: _userRole);
-      }
+      
+      await _storage.write(key: 'auth_token', value: _token);
+      await _storage.write(key: 'notary_name', value: _notaryName);
+      await _storage.write(key: 'user_role', value: _userRole);
+      
       return true;
     }
     return false;
@@ -103,15 +92,10 @@ class ApiService {
     _token = null;
     _notaryName = null;
     _userRole = null;
-    if (kIsWeb) {
-      html.window.localStorage.remove('auth_token');
-      html.window.localStorage.remove('notary_name');
-      html.window.localStorage.remove('user_role');
-    } else {
-      await _storage.delete(key: 'auth_token');
-      await _storage.delete(key: 'notary_name');
-      await _storage.delete(key: 'user_role');
-    }
+    
+    await _storage.delete(key: 'auth_token');
+    await _storage.delete(key: 'notary_name');
+    await _storage.delete(key: 'user_role');
   }
 
   // ── Chat Sessions ─────────────────────────────────────────────────────────
@@ -200,9 +184,12 @@ class ApiService {
   // ── ID Cards & Acte de Vente ──────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> sendIdCards(
-      XFile vendeur, XFile acheteur) async {
-    var request = http.MultipartRequest(
-        'POST', Uri.parse('$baseUrl/id-processing/from-id-cards'));
+      XFile vendeur, XFile acheteur, {String actType = "vente_immobilier"}) async {
+    var uri = Uri.parse('$baseUrl/id-processing/from-id-cards');
+    // Ajouter act_type comme paramètre de requête
+    uri = uri.replace(queryParameters: {'act_type': actType});
+    
+    var request = http.MultipartRequest('POST', uri);
     request.headers.addAll(_getHeaders());
 
     if (kIsWeb) {
@@ -359,5 +346,24 @@ class ApiService {
       headers: _getHeaders(),
     );
     return response.statusCode == 200;
+  }
+
+  static Future<Map<String, dynamic>> updateUser(int userId, Map<String, dynamic> userData) async {
+    final response = await http.patch(
+      Uri.parse('$baseUrl/admin/users/$userId'),
+      headers: _getHeaders(true),
+      body: json.encode(userData),
+    );
+    if (response.statusCode == 200) {
+      return {'success': true};
+    }
+    String errorMsg = 'Erreur ${response.statusCode}';
+    try {
+      final decoded = json.decode(utf8.decode(response.bodyBytes));
+      if (decoded is Map && decoded.containsKey('detail')) {
+        errorMsg = decoded['detail'].toString();
+      }
+    } catch (_) {}
+    return {'success': false, 'error': errorMsg};
   }
 }

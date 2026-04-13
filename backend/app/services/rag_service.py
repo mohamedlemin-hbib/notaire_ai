@@ -30,30 +30,73 @@ def retrieve_templates(act_type: str, context_query: str, n_results=2):
         return ""
     
     return "\n".join(results['documents'][0])
-
-def identify_missing_fields(parties_info: dict, special_clauses: str) -> list:
-    """Identify which mandatory fields are missing from the input."""
+def identify_missing_fields(parties_info: dict, special_clauses: str, act_type: str = "vente_immobilier") -> list:
+    """Identify which mandatory fields are missing from the input based on act type."""
     missing = []
     
-    vendeur = parties_info.get("vendeur", {})
-    if not vendeur or vendeur.get("error"):
-        missing.append("Informations du Vendeur (Photo illisible ou absente)")
+    # Validation de base des parties
+    p1_key = "monsieur" if act_type == "mariage" else "vendeur"
+    p2_key = "madame" if act_type == "mariage" else "acheteur"
     
-    acheteur = parties_info.get("acheteur", {})
-    if not acheteur or acheteur.get("error"):
-        missing.append("Informations de l'Acheteur (Photo illisible ou absente)")
+    p1 = parties_info.get(p1_key, {})
+    if not p1 or p1.get("error"):
+        label = "Monsieur" if act_type == "mariage" else "Vendeur"
+        missing.append(f"Informations du {label} (Photo illisible ou absente)")
+    
+    p2 = parties_info.get(p2_key, {})
+    if not p2 or p2.get("error"):
+        label = "Madame" if act_type == "mariage" else "Acheteur"
+        missing.append(f"Informations de l'Acheteur (Photo illisible ou absente)")
 
     sc_lower = special_clauses.lower() if special_clauses else ""
-    if "montant" not in sc_lower and "prix" not in sc_lower:
-        missing.append("Prix de vente / Montant (MRU)")
-    if "quartier" not in sc_lower:
-        missing.append("Quartier de situation du bien")
-    if "moughataa" not in sc_lower:
-        missing.append("Moughataa (Département)")
-    if "parcelle" not in sc_lower and "terrain" not in sc_lower:
-        missing.append("Numéro de parcelle / Terrain")
-    if "surface" not in sc_lower and "m²" not in sc_lower:
-        missing.append("Surface du terrain (m²)")
+    
+    if act_type == "mariage":
+        if "wali" not in sc_lower and "tuteur" not in sc_lower:
+            missing.append("Nom du Wali (Tuteur légal)")
+        if "témoin" not in sc_lower:
+            missing.append("Premier Témoin")
+            missing.append("Second Témoin")
+        if "mahr" not in sc_lower and "dot" not in sc_lower:
+            missing.append("Montant de la Dot (Mahr)")
+            missing.append("État de la Dot (Payé/Différé)")
+        if "conditions" not in sc_lower:
+            missing.append("Conditions particulières")
+            
+    elif act_type == "vente_vehicule":
+        if "marque" not in sc_lower and "modèle" not in sc_lower:
+            missing.append("Marque et Modèle du véhicule")
+        if "châssis" not in sc_lower:
+            missing.append("Numéro de Châssis")
+        if "immatriculation" not in sc_lower and "matricule" not in sc_lower:
+            missing.append("Numéro d'immatriculation")
+        if "prix" not in sc_lower and "montant" not in sc_lower:
+            missing.append("Prix de vente (MRU)")
+        if "année" not in sc_lower and "annee" not in sc_lower:
+            missing.append("Année de mise en circulation")
+
+    elif act_type == "vente_societe":
+        if "société" not in sc_lower and "dénomination" not in sc_lower:
+            missing.append("Dénomination de la société")
+        if "registre" not in sc_lower and "commerce" not in sc_lower:
+            missing.append("Registre du Commerce")
+        if "parts" not in sc_lower:
+            missing.append("Nombre de parts cédées")
+        if "valeur" not in sc_lower:
+            missing.append("Valeur nominale")
+        if "prix" not in sc_lower and "montant" not in sc_lower:
+            missing.append("Prix de cession (MRU)")
+        if "lettres" not in sc_lower:
+            missing.append("Prix en lettres")
+
+    else: # vente_immobilier ou par défaut
+        if "montant" not in sc_lower and "prix" not in sc_lower:
+            missing.append("Prix de vente / Montant (MRU)")
+        if "quartier" not in sc_lower:
+            missing.append("Quartier de situation du bien")
+        if "moughataa" not in sc_lower:
+            missing.append("Moughataa (Département)")
+        if "parcelle" not in sc_lower and "terrain" not in sc_lower:
+            missing.append("Numéro de parcelle / Terrain")
 
     return missing
 
@@ -66,85 +109,121 @@ def generate_notarial_draft(
     completion_data: dict = None
 ) -> str:
     """
-    Génère un brouillon d'acte de manière 100% déterministe en utilisant standard_template.txt.
-    Élimine les hallucinations IA en injectant les données OCR directement dans le template légal.
+    Génère un brouillon d'acte de manière déterministe en utilisant le template approprié.
     """
     import os
     import datetime
     import random
     
-    # Charger le template source de vérité
+    # Sélection du template
+    template_filename = f"template_{act_type}.txt"
+    if act_type == "vente": template_filename = "template_vente_immobilier.txt" # Fallback mapping
+    
     try:
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        # Remonter d'un cran si on est dans app/services
         backend_dir = os.path.abspath(os.path.join(current_dir, "..", ".."))
-        template_path = os.path.join(backend_dir, "standard_template.txt")
+        template_path = os.path.join(backend_dir, template_filename)
+        
+        # Fallback si le template spécifique n'existe pas
+        if not os.path.exists(template_path):
+            template_path = os.path.join(backend_dir, "standard_template.txt")
+            
         with open(template_path, "r", encoding="utf-8") as f:
             template_text = f.read()
     except Exception as e:
-        print(f"Erreur chargement template: {e}")
-        # Fallback au texte par défaut si le fichier manque
+        print(f"Erreur chargement template {template_filename}: {e}")
         template_text = "Acte N° : ............\nPar-devant Maître ............\nOnt comparu : ..."
 
     # Données temporelles
     act_number = parties_info.get("act_number", f"{random.randint(100, 999)}/{datetime.datetime.now().year}")
     current_date = datetime.datetime.now().strftime("%d/%m/%Y")
     
-    # Données Vendeur
-    vendeur = parties_info.get("vendeur", {})
-    v_nom = (vendeur.get("nom") or "").upper()
-    v_prenom = (vendeur.get("prenom") or "").capitalize()
-    v_full = f"{v_prenom} {v_nom}".strip() if (v_nom or v_prenom) else "........................"
-    v_nni = vendeur.get("nni") or "........................"
-    v_date = vendeur.get("date_naissance") or ".........."
-    v_lieu = vendeur.get("lieu_naissance") or ".........."
+    # Mapping des parties selon le type d'acte
+    p1_key = "monsieur" if act_type == "mariage" else "vendeur"
+    p2_key = "madame" if act_type == "mariage" else "acheteur"
     
-    # Données Acheteur
-    acheteur = parties_info.get("acheteur", {})
-    a_nom = (acheteur.get("nom") or "").upper()
-    a_prenom = (acheteur.get("prenom") or "").capitalize()
-    a_full = f"{a_prenom} {a_nom}".strip() if (a_nom or a_prenom) else "........................"
-    a_nni = acheteur.get("nni") or "........................"
-    a_date = acheteur.get("date_naissance") or ".........."
-    a_lieu = acheteur.get("lieu_naissance") or ".........."
+    p1 = parties_info.get(p1_key, {})
+    p1_full = f"{(p1.get('prenom') or '').capitalize()} {(p1.get('nom') or '').upper()}".strip() or "........................"
+    p1_nni = p1.get("nni") or "........................"
+    p1_date = p1.get("date_naissance") or ".........."
+    p1_lieu = p1.get("lieu_naissance") or ".........."
     
-    # Données Complémentaires (depuis le formulaire de complétion)
+    p2 = parties_info.get(p2_key, {})
+    p2_full = f"{(p2.get('prenom') or '').capitalize()} {(p2.get('nom') or '').upper()}".strip() or "........................"
+    p2_nni = p2.get("nni") or "........................"
+    p2_date = p2.get("date_naissance") or ".........."
+    p2_lieu = p2.get("lieu_naissance") or ".........."
+    
     comp = completion_data or {}
-    p_parcelle = comp.get("parcelle") or ".........."
-    p_quartier = comp.get("quartier") or "........................"
-    p_moughataa = comp.get("moughataa") or "........................"
-    p_prix = comp.get("prix") or ".........."
-    p_prix_lettres = comp.get("prix_lettres") or "............"
-    p_date_effet = comp.get("date_effet") or current_date
-
-    # Remplacement déterministe dans le template
-    # 1. En-tête
+    
+    # Remplacement générique
     res = template_text.replace("Acte N° : ............", f"Acte N° : {act_number}")
     res = res.replace("au bureau de : ............", f"au bureau de : {notary_bureau}")
     res = res.replace("Maître ........................", f"Maître {notary_name}")
     res = res.replace("correspondant au (date) ..........", f"correspondant au (date) {current_date}")
     
-    # 2. Vendeur (1. M./Mme : ...)
-    res = res.replace("1. M./Mme : ........................", f"1. M./Mme : {v_full}")
-    # Attention: Remplacer le premier "né(e) le .......... à .........."
-    # Comme .replace remplace tout ou N occurrences, on va être prudent.
-    res = res.replace("né(e) le .......... à ..........", f"né(e) le {v_date} à {v_lieu}", 1)
-    res = res.replace("titulaire de la Carte Nationale d'Identité n° : ........................", f"titulaire de la Carte Nationale d'Identité n° : {v_nni}", 1)
+    # Remplacement des parties (1. M./Mme ...)
+    # On gère les deux types de préfixes dans les templates
+    res = res.replace("1. M./Mme : ........................", f"1. M./Mme : {p1_full}")
+    res = res.replace("1. M. : ........................", f"1. M. : {p1_full}")
     
-    # 3. Acheteur (2. M./Mme : ...)
-    res = res.replace("2. M./Mme : ........................", f"2. M./Mme : {a_full}")
-    res = res.replace("né(e) le .......... à ..........", f"né(e) le {a_date} à {a_lieu}", 1)
-    res = res.replace("titulaire de la Carte Nationale d'Identité n° : ........................", f"titulaire de la Carte Nationale d'Identité n° : {a_nni}", 1)
+    res = res.replace("né(e) le .......... à ..........", f"né(e) le {p1_date} à {p1_lieu}", 1)
+    res = res.replace("né le .......... à ..........", f"né le {p1_date} à {p1_lieu}", 1)
     
-    # 4. Détails du bien
-    res = res.replace("terrain n° : ..........", f"terrain n° : {p_parcelle}")
-    res = res.replace("quartier : ........................", f"quartier : {p_quartier}")
-    res = res.replace("Moughataa de : ........................", f"Moughataa de : {p_moughataa}")
+    res = res.replace("titulaire de la Carte Nationale d'Identité n° : ........................", f"titulaire de la Carte Nationale d'Identité n° : {p1_nni}", 1)
     
-    # 5. Montant et Date
-    res = res.replace("Montant : ..........", f"Montant : {p_prix}")
-    res = res.replace("(soit ............) ", f"(soit {p_prix_lettres}) ")
-    res = res.replace("À compter du ..........", f"À compter du {p_date_effet}")
+    res = res.replace("2. M./Mme : ........................", f"2. M./Mme : {p2_full}")
+    res = res.replace("2. Mme : ........................", f"2. Mme : {p2_full}")
+    
+    res = res.replace("né(e) le .......... à ..........", f"né(e) le {p2_date} à {p2_lieu}", 1)
+    res = res.replace("née le .......... à ..........", f"née le {p2_date} à {p2_lieu}", 1)
+    
+    res = res.replace("titulaire de la Carte Nationale d'Identité n° : ........................", f"titulaire de la Carte Nationale d'Identité n° : {p2_nni}", 1)
+    
+    # Remplacement des données spécifiques (selon les clés présentes dans les templates)
+    for key, value in comp.items():
+        placeholder = f".........." # Très générique, on va plutôt chercher par label
+        # Cette partie est plus complexe sans un mapping strict par type d'acte dans le template
+        # Mais pour l'instant on garde la logique de remplacement direct pour les champs connus
+        pass
+
+    # Champs spécifiques IMMOBILIER
+    res = res.replace("terrain n° : ..........", f"terrain n° : {comp.get('parcelle', '..........')}")
+    res = res.replace("quartier : ........................", f"quartier : {comp.get('quartier', '........................')}")
+    res = res.replace("Moughataa de : ........................", f"Moughataa de : {comp.get('moughataa', '........................')}")
+    
+    # Champs spécifiques VÉHICULE
+    res = res.replace("Marque/Modèle : ........................", f"Marque/Modèle : {comp.get('marque_modele', '........................')}")
+    res = res.replace("N° de Châssis : ........................", f"N° de Châssis : {comp.get('chassis', '........................')}")
+    res = res.replace("Immatriculation : ........................", f"Immatriculation : {comp.get('matricule', '........................')}")
+    res = res.replace("- Année : ........................", f"- Année : {comp.get('annee', '........................')}")
+    res = res.replace("Année : ........................", f"Année : {comp.get('annee', '........................')}")
+    
+    # Champs spécifiques SOCIÉTÉ (Parts sociales)
+    res = res.replace("société dénommée : ........................", f"société dénommée : {comp.get('nom_societe', '........................')}")
+    res = res.replace("sous le n° : .........................", f"sous le n° : {comp.get('registre_commerce', '.........................')}")
+    res = res.replace("Nombre de parts cédées : ........................", f"Nombre de parts cédées : {comp.get('parts_cedees', '........................')}")
+    res = res.replace("Valeur nominale : ........................", f"Valeur nominale : {comp.get('valeur_nominale', '........................')}")
+
+    # Champs spécifiques MARIAGE
+    res = res.replace("Le Wali (Tuteur légal) de l'épouse : ........................", f"Le Wali (Tuteur légal) de l'épouse : {comp.get('wali', '........................')}")
+    res = res.replace("- Témoin 1 : ........................", f"- Témoin 1 : {comp.get('temoin1', '........................')}")
+    res = res.replace("- Témoin 2 : ........................", f"- Témoin 2 : {comp.get('temoin2', '........................')}")
+    res = res.replace("- Montant : ........................", f"- Montant : {comp.get('mahr', '........................')}")
+    res = res.replace("- État : ........................ (Payé / Différé)", f"- État : {comp.get('mahr_etat', '........................')} (Payé / Différé)")
+    res = res.replace("Conditions particulières : ........................", f"Conditions particulières : {comp.get('conditions', '........................')}")
+    
+    # Montant global (Prix)
+    res = res.replace("Prix de la cession : ..........", f"Prix de la cession : {comp.get('prix', '..........')}")
+    res = res.replace("Montant : ..........", f"Montant : {comp.get('prix', '..........')}")
+    res = res.replace("Montant de la vente : ..........", f"Montant de la vente : {comp.get('prix', '..........')}")
+    res = res.replace("(soit ............) ", f"(soit {comp.get('prix_lettres', '............')}) ")
+    res = res.replace("(soit ............) Nouvelles", f"(soit {comp.get('prix_lettres', '............')}) Nouvelles")
+    
+    res = res.replace("À compter du ..........", f"À compter du {comp.get('date_effet', current_date)}")
+    res = res.replace("Le (jour) .......... correspondant", f"Le (jour) {current_date} correspondant")
+    res = res.replace("correspondant au (date) ..........", f"correspondant au (date) {current_date}")
+    res = res.replace("l'an ..........", f"l'an {datetime.datetime.now().year}")
     res = res.replace("conformes, le ..........", f"conformes, le {current_date}")
 
     return res

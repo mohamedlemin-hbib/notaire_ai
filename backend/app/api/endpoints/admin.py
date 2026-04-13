@@ -51,3 +51,23 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     user.is_active = 0
     db.commit()
     return {"message": "Utilisateur désactivé avec succès"}
+
+@router.patch("/users/{user_id}", response_model=UserOut)
+def update_user(user_id: int, user_in: UserUpdate, db: Session = Depends(get_db)):
+    """Mettre à jour un utilisateur."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
+    
+    update_data = user_in.model_dump(exclude_unset=True)
+    if "password" in update_data and update_data["password"]:
+        user.hashed_password = security.get_password_hash(update_data["password"])
+        del update_data["password"]
+    
+    for field, value in update_data.items():
+        setattr(user, field, value)
+    
+    db.commit()
+    db.refresh(user)
+    return user
+

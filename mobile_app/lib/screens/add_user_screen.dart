@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 
 class AddUserScreen extends StatefulWidget {
-  const AddUserScreen({super.key});
+  final Map<String, dynamic>? user;
+  const AddUserScreen({super.key, this.user});
 
   @override
   State<AddUserScreen> createState() => _AddUserScreenState();
@@ -15,32 +17,68 @@ class _AddUserScreenState extends State<AddUserScreen> {
   final _lastNameController = TextEditingController();
   final _bureauController = TextEditingController();
   final _birthDateController = TextEditingController();
+  final _nniController = TextEditingController();
   bool _isLoading = false;
 
-  Future<void> _handleCreateUser() async {
-    if (_emailController.text.isEmpty || _passController.text.isEmpty) {
+  bool get _isEditing => widget.user != null;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isEditing) {
+      final u = widget.user!;
+      _emailController.text = u['email'] ?? '';
+      _firstNameController.text = u['first_name'] ?? '';
+      _lastNameController.text = u['last_name'] ?? '';
+      _birthDateController.text = u['birth_date'] ?? '';
+      _bureauController.text = u['bureau'] ?? '';
+      _nniController.text = u['nni'] ?? '';
+    }
+  }
+
+  Future<void> _handleSaveUser() async {
+    if (_emailController.text.isEmpty || (!_isEditing && _passController.text.isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Email et mot de passe sont obligatoires.")),
       );
       return;
     }
 
+    // Validation du NNI (doit avoir exactement 10 chiffres s'il est fourni)
+    if (_nniController.text.isNotEmpty && _nniController.text.length != 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Le NNI doit comporter exactement 10 chiffres.")),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
-      final result = await ApiService.createUser({
+      final userData = {
         'email': _emailController.text,
-        'password': _passController.text,
         'first_name': _firstNameController.text,
         'last_name': _lastNameController.text,
         'birth_date': _birthDateController.text,
         'bureau': _bureauController.text,
+        'nni': _nniController.text,
         'role': 'notaire',
-      });
+      };
+
+      if (_passController.text.isNotEmpty) {
+        userData['password'] = _passController.text;
+      }
+
+      final dynamic result;
+      if (_isEditing) {
+        result = await ApiService.updateUser(widget.user!['id'], userData);
+      } else {
+        result = await ApiService.createUser(userData);
+      }
 
       if (result['success'] == true) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Notaire créé avec succès.")),
+            SnackBar(content: Text(_isEditing ? "Notaire mis à jour." : "Notaire créé avec succès.")),
           );
           Navigator.pop(context);
         }
@@ -65,7 +103,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Ajouter un Notaire")),
+      appBar: AppBar(title: Text(_isEditing ? "Modifier le Notaire" : "Ajouter un Notaire")),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -88,8 +126,23 @@ class _AddUserScreenState extends State<AddUserScreen> {
             const SizedBox(height: 16),
             TextField(
               controller: _passController,
-              decoration: const InputDecoration(labelText: "Mot de passe *"),
+              decoration: InputDecoration(
+                labelText: _isEditing ? "Mot de passe (laisser vide pour ne pas changer)" : "Mot de passe *",
+              ),
               obscureText: true,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _nniController,
+              decoration: const InputDecoration(
+                labelText: "NNI (Numéro National d'Identité)",
+                hintText: "10 chiffres requis",
+              ),
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(10),
+              ],
             ),
             const SizedBox(height: 16),
             TextField(
@@ -106,7 +159,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
               width: double.infinity,
               height: 50,
               child: ElevatedButton(
-                onPressed: _isLoading ? null : _handleCreateUser,
+                onPressed: _isLoading ? null : _handleSaveUser,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF1A237E),
                   foregroundColor: Colors.white,

@@ -10,17 +10,20 @@ router = APIRouter()
 @router.get("/list")
 def list_documents(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
-    Récupère la liste des actes de l'utilisateur connecté.
+    Récupère la liste des actes de l'utilisateur connecté avec métadonnées de complétion.
     """
     docs = db.query(Document).filter(Document.owner_id == current_user.id).order_by(Document.created_at.desc()).all()
     results = []
     for doc in docs:
+        meta = doc.metadata_json or {}
         results.append({
             "id": doc.id,
             "title": doc.title,
             "created_at": doc.created_at.isoformat() if doc.created_at else None,
             "pdf_url": f"/api/v1/id-processing/download-pdf/{doc.id}",
-            "status": doc.status.value if doc.status else "brouillon"
+            "status": doc.status.value if doc.status else "brouillon",
+            "act_type": meta.get("requested_type") or (doc.act_type.value if doc.act_type else "vente_immobilier"),
+            "missing_fields": meta.get("missing_vars", [])
         })
     return results
 

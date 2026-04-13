@@ -3,13 +3,24 @@ import 'package:flutter/foundation.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:http/http.dart' as http;
 import 'dart:typed_data';
+import 'package:mobile_app/services/api_service.dart';
+import 'package:mobile_app/widgets/completion_dialog.dart';
 
 class PdfViewerScreen extends StatefulWidget {
   final String pdfUrl;
   final String title;
+  final int? documentId;
+  final List<String>? missingFields;
+  final String? actType;
 
-  const PdfViewerScreen(
-      {super.key, required this.pdfUrl, required this.title});
+  const PdfViewerScreen({
+    super.key,
+    required this.pdfUrl,
+    required this.title,
+    this.documentId,
+    this.missingFields,
+    this.actType,
+  });
 
   @override
   State<PdfViewerScreen> createState() => _PdfViewerScreenState();
@@ -20,10 +31,12 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   final PdfViewerController _pdfController = PdfViewerController();
+  List<String>? _currentMissingFields;
 
   @override
   void initState() {
     super.initState();
+    _currentMissingFields = widget.missingFields;
     _fetchPdf();
   }
 
@@ -63,6 +76,71 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     }
   }
 
+  Future<void> _handleCompletion() async {
+    if (widget.documentId == null || _currentMissingFields == null || _currentMissingFields!.isEmpty) return;
+
+    final fieldKeys = CompletionDialog.getFieldKeys();
+    final Map<String, TextEditingController> controllers = {};
+    for (final field in _currentMissingFields!) {
+      if (fieldKeys.containsKey(field)) {
+        controllers[field] = TextEditingController();
+      }
+    }
+
+    if (controllers.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Aucun champ compatible trouvé pour la complétion.")),
+      );
+      return;
+    }
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => CompletionDialog(
+        controllers: controllers,
+        fieldKeys: fieldKeys,
+        missingFields: _currentMissingFields!,
+        actType: widget.actType,
+      ),
+    );
+
+    if (result != null && result.isNotEmpty) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+
+      try {
+        final completed = await ApiService.completeAct(widget.documentId!, result);
+        final remaining = List<String>.from(completed['missing_fields'] ?? []);
+        
+        setState(() {
+          _currentMissingFields = remaining;
+          _pdfBytes = null; // Forces re-fetch
+        });
+        
+        await _fetchPdf();
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(remaining.isEmpty 
+                ? "Acte finalisé avec succès !" 
+                : "Acte mis à jour. ${remaining.length} champ(s) restant(s)."),
+              backgroundColor: remaining.isEmpty ? Colors.green : Colors.orange,
+            ),
+          );
+        }
+      } catch (e) {
+        setState(() {
+          _errorMessage = "Erreur lors de la complétion : $e";
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   void _openInBrowser() {
     // Compatible web et mobile
     if (kIsWeb) {
@@ -93,6 +171,8 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    bool hasMissing = (_currentMissingFields != null && _currentMissingFields!.isNotEmpty);
+
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6FA),
       appBar: AppBar(
@@ -113,6 +193,12 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
           ],
         ),
         actions: [
+          if (!_isLoading && hasMissing)
+            TextButton.icon(
+              onPressed: _handleCompletion,
+              icon: const Icon(Icons.edit_note, color: Colors.amber),
+              label: const Text("Compléter", style: TextStyle(color: Colors.white, fontSize: 13)),
+            ),
           if (!_isLoading && _pdfBytes != null) ...[
             IconButton(
               icon: const Icon(Icons.zoom_in),

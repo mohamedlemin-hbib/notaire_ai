@@ -23,62 +23,81 @@ class CompletionData(BaseModel):
 
 @router.post("/from-id-cards")
 async def generate_from_ids(
+    act_type: str = "vente_immobilier",
     vendeur_id: UploadFile = File(...),
     acheteur_id: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Génère un acte de vente complet à partir des photos des cartes d'identité.
-    Retourne également les champs manquants à compléter par le notaire.
+    Génère un acte à partir des photos des cartes d'identité.
+    Le type d'acte peut être : vente_immobilier, vente_vehicule, vente_societe, mariage.
     """
     try:
-        # 1. Extraction OCR via Gemini en un seul batch pour économiser le quota (429)
+        # 1. Extraction OCR via Gemini
         vendeur_bytes = await vendeur_id.read()
         acheteur_bytes = await acheteur_id.read()
         
         extracted = extract_info_from_ids_batch(vendeur_bytes, acheteur_bytes)
-        vendeur_info = extracted.get("vendeur", {})
-        acheteur_info = extracted.get("acheteur", {})
+        
+        # Mapping des rôles selon le type d'acte
+        p1_info = extracted.get("vendeur", {})
+        p2_info = extracted.get("acheteur", {})
 
-        if "error" in vendeur_info or "error" in acheteur_info:
-            err_vendeur = vendeur_info.get('error', '')
-            err_acheteur = acheteur_info.get('error', '')
-            detail_msg = err_vendeur if err_vendeur == err_acheteur else f"{err_vendeur} / {err_acheteur}"
+        if "error" in p1_info or "error" in p2_info:
+            err_p1 = p1_info.get('error', '')
+            err_p2 = p2_info.get('error', '')
+            detail_msg = err_p1 if err_p1 == err_p2 else f"{err_p1} / {err_p2}"
             raise HTTPException(
                 status_code=429 if "429" in detail_msg else 500, 
                 detail=f"Erreur OCR: {detail_msg}"
             )
 
-        # 2. Identification des champs manquants AVANT génération
-        parties_info = {"vendeur": vendeur_info, "acheteur": acheteur_info}
-        special_clauses = "Acte de vente immobilière généré automatiquement."
-        missing_vars = identify_missing_fields(parties_info, special_clauses)
+        # Structure pour le RAG
+        parties_info = {}
+        if act_type == "mariage":
+            parties_info = {"monsieur": p1_info, "madame": p2_info}
+            special_clauses = "Acte de mariage civil et religieux."
+            doc_title_prefix = "Acte de Mariage"
+        else:
+            parties_info = {"vendeur": p1_info, "acheteur": p2_info}
+            special_clauses = f"Acte de {act_type.replace('_', ' ')} généré."
+            doc_title_prefix = f"Acte de {act_type.split('_')[-1].capitalize()}"
+
+        # 2. Identification des champs manquants
+        missing_vars = identify_missing_fields(parties_info, special_clauses, act_type)
         
-        # 3. Génération du brouillon initial via Gemini RAG
+        # 3. Génération du brouillon initial
         draft_content = generate_notarial_draft(
-            act_type="vente",
+            act_type=act_type,
             parties_info=parties_info,
             special_clauses=special_clauses,
             notary_name=current_user.full_name or ".........................",
             notary_bureau=current_user.bureau or "............",
         )
 
-        # 4. Titre professionnel sans noms de test
-        v_nom = vendeur_info.get("nom", "Vendeur Inconnu")
-        a_nom = acheteur_info.get("nom", "Acheteur Inconnu")
-        doc_title = f"Acte de Vente - {v_nom} / {a_nom}"
+        # 4. Titre
+        p1_nom = p1_info.get("nom", "Partie 1")
+        p2_nom = p2_info.get("nom", "Partie 2")
+        doc_title = f"{doc_title_prefix} - {p1_nom} / {p2_nom}"
         
-        # 5. Sauvegarde en BDD avec statut BROUILLON
+        # 5. Sauvegarde
+        # Conversion du string act_type en Enum member
+        try:
+            db_act_type = ActType(act_type)
+        except ValueError:
+            db_act_type = ActType.AUTRE
+
         new_doc = Document(
             title=doc_title,
-            act_type=ActType.VENTE,
+            act_type=db_act_type,
             status=ActStatus.BROUILLON,
             content=draft_content,
             metadata_json={
                 "parties": parties_info, 
                 "missing_vars": missing_vars,
-                "completion_data": {}
+                "completion_data": {},
+                "requested_type": act_type
             },
             owner_id=current_user.id
         )
@@ -88,43 +107,31 @@ async def generate_from_ids(
 
         return {
             "document_id": new_doc.id,
-            "vendeur_extrait": vendeur_info,
-            "acheteur_extrait": acheteur_info,
+            "parties_extrait": parties_info,
             "content": draft_content,
             "pdf_url": f"/api/v1/id-processing/download-pdf/{new_doc.id}",
             "missing_fields": missing_vars,
             "notary_name": current_user.full_name,
             "notary_bureau": current_user.bureau,
             "status": "brouillon",
-            "message": (
-                f"Brouillon créé avec succès. {len(missing_vars)} information(s) manquante(s) à compléter."
-                if missing_vars else
-                "Acte généré et complet."
-            )
+            "message": f"Brouillon '{act_type}' créé avec succès."
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
         import traceback
-        err_str = traceback.format_exc()
-        try:
-            print(f"Erreur generate_from_ids: {err_str}")
-        except:
-            print(f"Erreur generate_from_ids: {str(e)}")
+        print(f"Erreur generate_from_ids: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.patch("/complete/{document_id}")
 async def complete_act(
     document_id: int,
-    completion: CompletionData,
+    completion: dict,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Complète un acte de vente avec les informations manquantes (prix, quartier, parcelle, etc.)
-    et régénère le document final.
+    Complète un acte quel que soit son type.
     """
     doc = db.query(Document).filter(
         Document.id == document_id,
@@ -134,34 +141,29 @@ async def complete_act(
     if not doc:
         raise HTTPException(status_code=404, detail="Document non trouvé")
     
-    if doc.status == ActStatus.VALIDE:
-        raise HTTPException(status_code=400, detail="Cet acte est déjà validé et ne peut plus être modifié.")
-
     try:
-        # Récupérer les données d'origine
         meta = doc.metadata_json or {}
         parties_info = meta.get("parties", {})
-        completion_dict = completion.dict(exclude_none=True)
+        act_type = meta.get("requested_type") or doc.act_type.value
+        completion_dict = completion
         
-        # Mettre à jour les données de complétion
         existing_completion = meta.get("completion_data", {})
         existing_completion.update(completion_dict)
         
-        # Régénération de l'acte avec les données complètes
+        # Régénération
         updated_content = generate_notarial_draft(
-            act_type="vente",
+            act_type=act_type,
             parties_info=parties_info,
-            special_clauses="Acte de vente immobilière finalisé.",
+            special_clauses=f"Acte de {act_type} finalisé.",
             notary_name=current_user.full_name or ".........................",
             notary_bureau=current_user.bureau or "............",
             completion_data=existing_completion
         )
         
-        # Vérifier les champs manquants restants
+        # Vérification des champs restants
         combined_clauses = " ".join([f"{k}:{v}" for k, v in existing_completion.items()])
-        remaining_missing = identify_missing_fields(parties_info, combined_clauses)
+        remaining_missing = identify_missing_fields(parties_info, combined_clauses, act_type)
         
-        # Mise à jour en BDD
         doc.content = updated_content
         doc.status = ActStatus.BROUILLON if remaining_missing else ActStatus.VALIDE
         doc.metadata_json = {
@@ -204,7 +206,10 @@ async def download_pdf(
     
     # Récupérer les infos pour enrichir le PDF
     meta = doc.metadata_json or {}
-    parties = meta.get("parties", {})
+    act_type = meta.get("requested_type") or (doc.act_type.value if doc.act_type else "vente_immobilier")
+    
+    # Debug log pour confirmer le type envoyé au service PDF
+    print(f"DEBUG: Generating PDF for Doc {document_id}, ActType: {act_type}")
     
     pdf_buffer = generate_act_pdf(
         title=doc.title,
@@ -212,7 +217,8 @@ async def download_pdf(
         act_number=str(document_id),
         notary_name=doc.owner.full_name if doc.owner else "............",
         notary_bureau=doc.owner.bureau if doc.owner and doc.owner.bureau else "............",
-        status=doc.status.value if doc.status else "brouillon"
+        status=doc.status.value if doc.status else "brouillon",
+        act_type=act_type
     )
     
     content = pdf_buffer.getvalue()

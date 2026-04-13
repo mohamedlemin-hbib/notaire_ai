@@ -84,6 +84,9 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
                           builder: (context) => PdfViewerScreen(
                             pdfUrl: fullUrl,
                             title: doc['title'] ?? "Acte",
+                            documentId: doc['id'],
+                            missingFields: doc['missing_fields'] != null ? List<String>.from(doc['missing_fields']) : null,
+                            actType: doc['act_type'],
                           ),
                         ),
                       );

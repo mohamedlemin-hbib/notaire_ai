@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:mobile_app/widgets/completion_dialog.dart';
 
 /// ── Constantes de design (Style Gemini Moderne) ──────────────────────────────
 const kPrimaryColor = Color(0xFF1A237E);
@@ -40,6 +41,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   XFile? _vendeurFile;
   XFile? _acheteurFile;
+  String _selectedActType = "vente_immobilier";
 
   @override
   void initState() {
@@ -215,31 +217,35 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final XFile? image = await _picker.pickImage(source: source);
     if (image == null) return;
 
+    final isMariage = _selectedActType == "mariage";
+    final labelP1 = isMariage ? "Monsieur" : "Vendeur";
+    final labelP2 = isMariage ? "Madame" : "Acheteur";
+
     setState(() {
       if (_vendeurFile == null) {
         _vendeurFile = image;
         _messages.add({
-          "text": "📷 Carte d'identité Vendeur envoyée.",
+          "text": "📷 Carte d'identité $labelP1 envoyée.",
           "isUser": true,
           "image": image.path,
           "time": DateTime.now()
         });
         _messages.add({
           "text":
-              "Carte d'identité du Vendeur reçue ✓\n\nMaintenant, veuillez envoyer la carte d'identité de **l'Acheteur**.",
+              "Carte d'identité du $labelP1 reçue ✓\n\nMaintenant, veuillez envoyer la carte d'identité de **$labelP2**.",
           "isUser": false,
           "time": DateTime.now()
         });
       } else if (_acheteurFile == null) {
         _acheteurFile = image;
         _messages.add({
-          "text": "📷 Carte d'identité Acheteur envoyée.",
+          "text": "📷 Carte d'identité $labelP2 envoyée.",
           "isUser": true,
           "image": image.path,
           "time": DateTime.now()
         });
         _messages.add({
-          "text": "⚙️ Analyse des pièces d'identité en cours… Génération de l'acte selon votre modèle officiel.",
+          "text": "⚙️ Analyse des pièces d'identité en cours… Génération d'un acte de type ${_selectedActType == 'mariage' ? 'mariage' : 'vente immobilier'}.",
           "isUser": false,
           "time": DateTime.now()
         });
@@ -253,9 +259,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Future<void> _processIdCards() async {
     setState(() => _isSending = true);
     try {
-      final res = await ApiService.sendIdCards(_vendeurFile!, _acheteurFile!);
-      final vendeurNom = res['vendeur_extrait']?['nom'] ?? '—';
-      final acheteurNom = res['acheteur_extrait']?['nom'] ?? '—';
+      final res = await ApiService.sendIdCards(
+        _vendeurFile!, 
+        _acheteurFile!, 
+        actType: _selectedActType
+      );
+      final parties = res['parties_extrait'] ?? {};
+      final isMariage = _selectedActType == "mariage";
+      final p1Nom = isMariage ? (parties['monsieur']?['nom'] ?? '—') : (parties['vendeur']?['nom'] ?? '—');
+      final p2Nom = isMariage ? (parties['madame']?['nom'] ?? '—') : (parties['acheteur']?['nom'] ?? '—');
+      final p1Label = isMariage ? "Monsieur" : "Vendeur";
+      final p2Label = isMariage ? "Madame" : "Acheteur";
+      
       final docId = res['document_id'] as int?;
       final pdfUrl = ApiService.getFullUrl(res['pdf_url'] ?? '');
       final missingFields = List<String>.from(res['missing_fields'] ?? []);
@@ -263,10 +278,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       setState(() {
         _messages.add({
           "text":
-              "✅ Brouillon généré !\n\n• **Vendeur** : $vendeurNom\n• **Acheteur** : $acheteurNom",
+              "✅ Brouillon d'acte de ${_selectedActType == 'mariage' ? 'mariage' : 'vente'} généré !\n\n• **$p1Label** : $p1Nom\n• **$p2Label** : $p2Nom",
           "isUser": false,
           "pdfUrl": pdfUrl,
           "documentId": docId,
+          "missingFields": missingFields,
           "time": DateTime.now()
         });
         _vendeurFile = null;
@@ -286,7 +302,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         await ApiService.addChatMessage(
             _currentSessionId!,
             "assistant",
-            "Brouillon généré — Vendeur: $vendeurNom, Acheteur: $acheteurNom",
+            "Brouillon généré — $p1Label: $p1Nom, $p2Label: $p2Nom",
             "pdf");
       }
     } catch (e) {
@@ -307,15 +323,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   /// Dialogue interactif pour compléter les champs manquants de l'acte.
   Future<void> _showCompletionDialog(
       int docId, List<String> missingFields, String oldPdfUrl) async {
+    final fieldKeys = CompletionDialog.getFieldKeys();
     final Map<String, TextEditingController> controllers = {};
-    final Map<String, String> fieldKeys = {
-      "Prix de vente / Montant (MRU)": "prix",
-      "Quartier de situation du bien": "quartier",
-      "Moughataa (Département)": "moughataa",
-      "Numéro de parcelle / Terrain": "parcelle",
-      "Surface du terrain (m²)": "surface",
-    };
-
     for (final field in missingFields) {
       if (fieldKeys.containsKey(field)) {
         controllers[field] = TextEditingController();
@@ -336,17 +345,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final result = await showDialog<Map<String, String>>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => _CompletionDialog(
+      builder: (context) => CompletionDialog(
         controllers: controllers,
         fieldKeys: fieldKeys,
         missingFields: missingFields,
+        actType: _selectedActType,
       ),
     );
 
     if (result != null && result.isNotEmpty) {
+      final details = result.entries.map((e) => "• ${e.key} : ${e.value}").join("\n");
       setState(() {
         _messages.add({
-          "text": "📋 Informations complémentaires envoyées. Régénération en cours…",
+          "text": "📋 Informations complétées :\n$details\n\nRégénération en cours…",
           "isUser": true,
           "time": DateTime.now()
         });
@@ -369,6 +380,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             "isUser": false,
             "pdfUrl": newPdfUrl,
             "documentId": docId,
+            "missingFields": remaining,
             "time": DateTime.now()
           });
         });
@@ -392,6 +404,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           "isUser": false,
           "pdfUrl": oldPdfUrl,
           "documentId": docId,
+          "missingFields": missingFields,
           "time": DateTime.now()
         });
       });
@@ -458,6 +471,59 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
         ),
       ),
+    );
+  }
+
+  void _showActTypeSelection() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Quel type d'acte souhaitez-vous générer ?",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 20),
+            _buildActOption(Icons.home_work_outlined, "Vente Immobilière", "vente_immobilier"),
+            _buildActOption(Icons.directions_car_outlined, "Vente de Véhicule", "vente_vehicule"),
+            _buildActOption(Icons.business_outlined, "Vente de Société (Parts)", "vente_societe"),
+            _buildActOption(Icons.favorite_outline, "Acte de Mariage", "mariage"),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActOption(IconData icon, String title, String code) {
+    return ListTile(
+      leading: Icon(icon, color: kNavy),
+      title: Text(title),
+      onTap: () {
+        Navigator.pop(context);
+        setState(() {
+          _selectedActType = code;
+          _vendeurFile = null;
+          _acheteurFile = null;
+          final isMariage = code == "mariage";
+          final label = isMariage ? "de Monsieur" : "du Vendeur";
+          _messages.add({
+            "text": "Démarrage : $title",
+            "isUser": true,
+            "time": DateTime.now()
+          });
+          _messages.add({
+            "text": "Très bien Maître. Veuillez envoyer la carte d'identité $label.",
+            "isUser": false,
+            "time": DateTime.now()
+          });
+        });
+        _scrollToBottom();
+      },
     );
   }
 
@@ -636,9 +702,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             const SizedBox(height: 30),
             _buildActionCard(
               Icons.camera_alt_outlined,
-              "Générer un acte de vente",
-              "Scannez les CIN du Vendeur et de l'Acheteur.",
-              onTap: () => _pickImage(ImageSource.camera),
+              "Générer un acte",
+              "Sélectionnez le type d'acte et scannez les CIN.",
+              onTap: _showActTypeSelection,
               badgeText: "IA",
             ),
             _buildActionCard(
@@ -711,7 +777,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           isUser: msg["isUser"] ?? false,
           pdfUrl: msg["pdfUrl"],
           documentId: msg["documentId"],
+          missingFields: msg["missingFields"] != null ? List<String>.from(msg["missingFields"]) : null,
           time: msg["time"],
+          actType: _selectedActType,
         );
       },
     );
@@ -804,132 +872,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 }
 
-/// ── Dialogue de complétion des champs manquants ────────────────────────────
-class _CompletionDialog extends StatelessWidget {
-  final Map<String, TextEditingController> controllers;
-  final Map<String, String> fieldKeys;
-  final List<String> missingFields;
 
-  const _CompletionDialog({
-    required this.controllers,
-    required this.fieldKeys,
-    required this.missingFields,
-  });
 
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: const Row(
-        children: [
-          Icon(Icons.edit_document, color: kPrimaryColor),
-          SizedBox(width: 10),
-          Expanded(
-            child: Text("Compléter l'acte de vente",
-                style:
-                    TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.amber.shade50,
-                  borderRadius: BorderRadius.circular(10),
-                  border:
-                      Border.all(color: Colors.amber.shade200),
-                ),
-                child: Text(
-                  "⚠️ ${controllers.length} information(s) manquante(s). "
-                  "Remplissez les champs ci-dessous pour finaliser l'acte.",
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ),
-              const SizedBox(height: 16),
-              ...controllers.entries.map((entry) {
-                final fieldName = entry.key;
-                final controller = entry.value;
-                final hint = _getHint(fieldName);
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: TextField(
-                    controller: controller,
-                    decoration: InputDecoration(
-                      labelText: fieldName,
-                      hintText: hint,
-                      prefixIcon: Icon(_getIcon(fieldName),
-                          color: kPrimaryColor, size: 20),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide:
-                            const BorderSide(color: kPrimaryColor, width: 2),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, null),
-          child: const Text("Plus tard",
-              style: TextStyle(color: Colors.grey)),
-        ),
-        ElevatedButton.icon(
-          onPressed: () {
-            final result = <String, String>{};
-            for (final entry in controllers.entries) {
-              final key = fieldKeys[entry.key];
-              final val = entry.value.text.trim();
-              if (key != null && val.isNotEmpty) {
-                result[key] = val;
-              }
-            }
-            Navigator.pop(context, result);
-          },
-          icon: const Icon(Icons.check, size: 16),
-          label: const Text("Finaliser l'acte"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: kPrimaryColor,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
-          ),
-        ),
-      ],
-    );
-  }
-
-  String _getHint(String field) {
-    if (field.contains("Prix")) return "ex: 5000000";
-    if (field.contains("Quartier")) return "ex: Tevragh Zeina";
-    if (field.contains("Moughataa")) return "ex: Tevragh Zeina";
-    if (field.contains("parcelle")) return "ex: 123/B";
-    if (field.contains("Surface")) return "ex: 250";
-    return "";
-  }
-
-  IconData _getIcon(String field) {
-    if (field.contains("Prix")) return Icons.payments_outlined;
-    if (field.contains("Quartier")) return Icons.location_city_outlined;
-    if (field.contains("Moughataa")) return Icons.map_outlined;
-    if (field.contains("parcelle")) return Icons.grid_view_outlined;
-    if (field.contains("Surface")) return Icons.straighten_outlined;
-    return Icons.edit_outlined;
-  }
-}
+// REMOVED _CompletionDialog class as it's now external
 
 /// ── Chat Bubble ────────────────────────────────────────────────────────────
 class _ChatBubble extends StatelessWidget {
@@ -938,7 +883,9 @@ class _ChatBubble extends StatelessWidget {
   final bool isUser;
   final String? pdfUrl;
   final int? documentId;
+  final List<String>? missingFields;
   final DateTime? time;
+  final String actType;
 
   const _ChatBubble({
     this.text,
@@ -946,7 +893,9 @@ class _ChatBubble extends StatelessWidget {
     required this.isUser,
     this.pdfUrl,
     this.documentId,
+    this.missingFields,
     this.time,
+    required this.actType,
   });
 
   @override
@@ -1022,7 +971,13 @@ class _ChatBubble extends StatelessWidget {
                                 MaterialPageRoute(
                                     builder: (_) => PdfViewerScreen(
                                         pdfUrl: pdfUrl!,
-                                        title: "Acte de Vente")));
+                                        title: actType == "mariage"
+                                            ? "Acte de Mariage" 
+                                            : "Acte de Vente",
+                                        documentId: documentId,
+                                        missingFields: missingFields,
+                                        actType: actType,
+                                    )));
                           },
                           icon: const Icon(Icons.picture_as_pdf, size: 16),
                           label: const Text("Voir PDF",
