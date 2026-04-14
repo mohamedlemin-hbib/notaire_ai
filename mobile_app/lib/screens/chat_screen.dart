@@ -130,6 +130,17 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Future<void> _sendMessage(String text) async {
     if (text.isEmpty || _currentSessionId == null) return;
 
+    final lowerText = text.toLowerCase();
+    if (lowerText.contains("mariage")) {
+      _selectedActType = "mariage";
+    } else if (lowerText.contains("véhicule") || lowerText.contains("vehicule") || lowerText.contains("voiture")) {
+      _selectedActType = "vente_vehicule";
+    } else if (lowerText.contains("société") || lowerText.contains("societe") || lowerText.contains("parts")) {
+      _selectedActType = "vente_societe";
+    } else if (lowerText.contains("immobilier") || lowerText.contains("terrain") || lowerText.contains("maison")) {
+      _selectedActType = "vente_immobilier";
+    }
+
     final time = DateTime.now();
     setState(() {
       _messages.add({"text": text, "isUser": true, "time": time});
@@ -218,8 +229,17 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (image == null) return;
 
     final isMariage = _selectedActType == "mariage";
-    final labelP1 = isMariage ? "Monsieur" : "Vendeur";
-    final labelP2 = isMariage ? "Madame" : "Acheteur";
+    final isSociete = _selectedActType == "vente_societe";
+    
+    String labelP1 = "Vendeur";
+    String labelP2 = "Acheteur";
+    if (isMariage) {
+      labelP1 = "Monsieur";
+      labelP2 = "Madame";
+    } else if (isSociete) {
+      labelP1 = "Cédant";
+      labelP2 = "Cessionnaire";
+    }
 
     setState(() {
       if (_vendeurFile == null) {
@@ -721,14 +741,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   _sendMessage("Bonjour Maître, comment puis-je vous aider ?"),
               badgeText: "Gemini",
             ),
-            const SizedBox(height: 20),
-            _buildActionCard(
-              Icons.bolt_rounded,
-              "🚀 TEST RAPIDE (DÉMO)",
-              "Générer un acte instantanément (Simulation).",
-              onTap: () => _sendMessage("Générer un acte de vente de démonstration"),
-              badgeText: "V2.1",
-            ),
           ],
         ),
       ),
@@ -842,18 +854,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               icon: const Icon(Icons.tune_rounded, color: Colors.black54),
               onPressed: () {},
             ),
-            const Spacer(),
-            InkWell(
-              onTap: () => _sendMessage("Générer un acte de vente de démonstration"),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: kWhite,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.black12),
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                decoration: const InputDecoration(
+                  hintText: "Saisissez votre message...",
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8),
                 ),
-                child: const Text("Rapide",
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                onSubmitted: (value) => _sendMessage(value),
               ),
             ),
             IconButton(
@@ -862,7 +871,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               onPressed: _toggleRecording,
             ),
             IconButton(
-              icon: const Icon(Icons.auto_awesome_rounded, color: Colors.black54),
+              icon: const Icon(Icons.send_rounded, color: Colors.blueAccent),
               onPressed: () => _sendMessage(_controller.text),
             ),
           ],

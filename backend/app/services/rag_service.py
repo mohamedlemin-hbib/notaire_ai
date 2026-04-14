@@ -266,6 +266,23 @@ def chat_with_gemini(messages: list, system_prompt: str = None) -> str:
                 "document_id": 999
             }
         
+        # --- MODE SIMPLIFIÉ (Règles statiques anti-blocage) ---
+        msg_lower = message.lower()
+        if "mariage" in msg_lower and ("acte" in msg_lower or "generer" in msg_lower or "générer" in msg_lower):
+            return "Pour un **Acte de Mariage**, voici ce qui est nécessaire :\n\n1. 📷 Les cartes d'identité de Monsieur et Madame.\n2. 🧔 Le nom du Wali (Tuteur légal).\n3. 👥 Les noms des deux témoins.\n4. 💰 Le montant et l'état de la Dot (Mahr payé/différé).\n\n*Pour lancer la procédure de scan des cartes, veuillez cliquer sur le bouton principal en forme d'appareil photo ('Générer un acte') sur l'écran d'accueil.*"
+        
+        elif "vente" in msg_lower and ("immobilier" in msg_lower or "maison" in msg_lower or "terrain" in msg_lower):
+            return "Pour une **Vente Immobilière**, voici ce qui est nécessaire :\n\n1. 📷 Les cartes d'identité du Vendeur et de l'Acheteur.\n2. 💵 Le prix de vente (en MRU).\n3. 📍 Le Quartier et la Moughataa du bien.\n4. 🗺️ Le numéro de la parcelle (Terrain).\n\n*Utilisez le bouton 'Générer un acte' pour commencer le scan des documents.*"
+        
+        elif "vente" in msg_lower and ("voiture" in msg_lower or "vehicule" in msg_lower or "véhicule" in msg_lower):
+            return "Pour une **Vente de Véhicule**, voici ce qui est nécessaire :\n\n1. 📷 Les CI du Vendeur et de l'Acheteur.\n2. 🚙 La Marque, le Modèle et l'Année de mise en circulation.\n3. 🔢 Le numéro de Châssis (VIN) et d'Immatriculation.\n4. 💵 Le prix de vente conclu.\n\n*Utilisez le bouton 'Générer un acte' (icône appareil photo) pour démarrer.*"
+        
+        elif "vente" in msg_lower and ("societe" in msg_lower or "société" in msg_lower or "parts" in msg_lower):
+            return "Pour une **Cession de Parts Sociales (Vente de Société)**, il faut :\n\n1. 📷 Les CI du Cédant et du Cessionnaire.\n2. 🏢 La Dénomination de la société et le N° de Registre du Commerce.\n3. 📄 Le nombre de parts cédées et leur valeur nominale.\n4. 💵 Le prix de la cession.\n\n*Utilisez le bouton 'Générer un acte' pour uploader les pièces.*"
+
+        elif "bonjour" in msg_lower or "salut" in msg_lower:
+             return "Bonjour Maître ! Je suis l'assistant IA du cabinet. En raison d'une restriction temporaire des serveurs de Google (Clé API bloquée), mes capacités d'analyse complexes sont suspendues. Je peux néanmoins vous lister les pièces à fournir pour chaque acte. Comment puis-je vous aider ?"
+
         # Créer la config avec system instruction
         config = types.GenerateContentConfig(
             system_instruction=system_inst,
