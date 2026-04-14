@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.db.session import get_db
 from app.db.models import User, UserRole
-from app.schemas.user import UserCreate, UserOut
+from app.schemas.user import UserCreate, UserOut, UserUpdate
 from app.core import security
 from app.api.deps import get_current_active_admin
 
