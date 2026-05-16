@@ -15,6 +15,7 @@ class DraftRequest(BaseModel):
     act_type: ActType
     parties_info: Dict[str, Any]
     special_clauses: str
+    lang: str = "fr"
 
 @router.post("/draft", response_model=dict)
 def create_act_draft(
@@ -32,8 +33,10 @@ def create_act_draft(
             parties_info=request.parties_info,
             special_clauses=request.special_clauses,
             notary_name=current_user.full_name,
-            notary_bureau=current_user.bureau or "............"
+            notary_bureau=current_user.bureau or "............",
+            lang=request.lang
         )
+
 
         new_doc = Document(
             title=request.title,

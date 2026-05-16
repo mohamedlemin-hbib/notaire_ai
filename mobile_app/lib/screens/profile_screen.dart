@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/api_service.dart';
+import '../providers/language_provider.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -36,16 +38,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final lp = Provider.of<LanguageProvider>(context);
+
     return Scaffold(
       backgroundColor: const Color(0xFFF1F4F9),
       appBar: AppBar(
-        title: const Text("Mon Profil"),
+        title: Text(lp.translate('my_profile')),
         centerTitle: true,
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _userProfile == null
-              ? const Center(child: Text("Impossible de charger le profil"))
+              ? Center(child: Text(lp.translate('unable_load_profile')))
               : SingleChildScrollView(
                   padding: const EdgeInsets.all(24),
                   child: Column(
@@ -57,7 +61,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        _userProfile!['full_name'] ?? "Notaire",
+                        _userProfile!['full_name'] ?? lp.translate('welcome_back'),
                         style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                       ),
                       Text(
@@ -65,14 +69,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.w500),
                       ),
                       const SizedBox(height: 32),
-                      _buildInfoCard(),
+                      _buildInfoCard(lp),
                       const SizedBox(height: 32),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
-                          onPressed: _handleLogout,
+                          onPressed: () => _handleLogout(lp),
                           icon: const Icon(Icons.logout),
-                          label: const Text("Déconnexion"),
+                          label: Text(lp.translate('logout')),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.red[50],
                             foregroundColor: Colors.red,
@@ -90,17 +94,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _handleLogout() {
+  void _handleLogout(LanguageProvider lp) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Déconnexion"),
-        content: const Text("Voulez-vous vraiment vous déconnecter Maître ?"),
+        title: Text(lp.translate('logout')),
+        content: Text(lp.translate('logout_confirm')),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text("Annuler")),
+              child: Text(lp.translate('cancel'))),
           ElevatedButton(
             onPressed: () async {
               await ApiService.logout();
@@ -111,14 +115,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
             },
             style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red, foregroundColor: Colors.white),
-            child: const Text("Déconnexion"),
+            child: Text(lp.translate('logout')),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildInfoCard() {
+  Widget _buildInfoCard(LanguageProvider lp) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -130,15 +134,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       child: Column(
         children: [
-          _buildInfoRow(Icons.email_outlined, "Email", _userProfile!['email']),
+          _buildInfoRow(Icons.phone_android_outlined, lp.translate('phone_label'), _userProfile!['phone_number'] ?? "—"),
           const Divider(height: 32),
-          _buildInfoRow(Icons.business_outlined, "Bureau", _userProfile!['bureau'] ?? "Non spécifié"),
+          _buildInfoRow(Icons.business_outlined, lp.translate('bureau'), _userProfile!['bureau'] ?? lp.translate('not_specified')),
           const Divider(height: 32),
-          _buildInfoRow(Icons.cake_outlined, "Date de naissance", _userProfile!['birth_date'] ?? "Non spécifiée"),
+          _buildInfoRow(Icons.cake_outlined, lp.translate('birth_date'), _userProfile!['birth_date'] ?? lp.translate('not_specified')),
           const Divider(height: 32),
-          _buildInfoRow(Icons.person_outline, "Prénom", _userProfile!['first_name'] ?? "—"),
+          _buildInfoRow(Icons.person_outline, lp.translate('first_name'), _userProfile!['first_name'] ?? "—"),
           const Divider(height: 32),
-          _buildInfoRow(Icons.person_outline, "Nom", _userProfile!['last_name'] ?? "—"),
+          _buildInfoRow(Icons.person_outline, lp.translate('last_name'), _userProfile!['last_name'] ?? "—"),
         ],
       ),
     );

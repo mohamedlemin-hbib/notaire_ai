@@ -10,12 +10,16 @@ class UserBase(BaseModel):
     birth_date: Optional[str] = None
     bureau: Optional[str] = None
     nni: Optional[str] = Field(None, pattern=r"^\d{10}$", description="Le NNI doit comporter exactement 10 chiffres")
-    role: UserRole = UserRole.NOTAIRE
+    phone_number: Optional[str] = Field(None, pattern=r"^\d{8}$", description="Le numéro doit comporter exactement 8 chiffres")
+    role: Optional[UserRole] = UserRole.NOTAIRE
+
 
 class UserCreate(UserBase):
     password: str
 
 class UserUpdate(UserBase):
+    email: Optional[EmailStr] = None
+    role: Optional[UserRole] = None
     password: Optional[str] = None
 
 class UserOut(UserBase):

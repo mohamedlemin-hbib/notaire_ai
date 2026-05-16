@@ -13,7 +13,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.api.endpoints import generation, audit, admin, auth, admin_rag, id_generation, multimodal, chat
+from app.api.endpoints import generation, audit, admin, auth, admin_rag, id_generation, multimodal, chat, search
 
 app.include_router(generation.router, prefix="/api/v1/generation", tags=["Draft Generation"])
 app.include_router(audit.router, prefix="/api/v1/documents", tags=["Audit & Compliance"])
@@ -23,6 +23,7 @@ app.include_router(admin_rag.router, prefix="/api/v1/admin", tags=["RAG Manageme
 app.include_router(id_generation.router, prefix="/api/v1/id-processing", tags=["ID Processing"])
 # app.include_router(multimodal.router, prefix="/api/v1/multimodal", tags=["Multimodal Features"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat History"])
+app.include_router(search.router, prefix="/api/v1/search", tags=["Search & Filtering"])
 
 @app.get("/")
 def root():

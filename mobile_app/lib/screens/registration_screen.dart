@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/api_service.dart';
+import '../providers/language_provider.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
@@ -16,9 +18,20 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   bool _isLoading = false;
 
   Future<void> _handleRegister() async {
-    if (_emailController.text.isEmpty || _passController.text.isEmpty) {
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
+    if (_firstNameController.text.isEmpty || _passController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Veuillez remplir tous les champs obligatoires.")),
+        SnackBar(content: Text(lp.isArabic ? "الاسم وكلمة المرور مطلوبان" : "Le nom et le mot de passe sont requis")),
+      );
+      return;
+    }
+
+    // Sécurité : Mot de passe != Nom
+    if (_passController.text == _firstNameController.text || _passController.text == _lastNameController.text) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(lp.isArabic 
+          ? "كلمة المرور لا peut pas être identique à votre nom" 
+          : "Le mot de passe ne peut pas être identique à votre nom")),
       );
       return;
     }
@@ -26,24 +39,24 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     setState(() => _isLoading = true);
     try {
       final success = await ApiService.register({
-        'email': _emailController.text,
-        'password': _passController.text,
         'first_name': _firstNameController.text,
         'last_name': _lastNameController.text,
-        'role': 'notaire',
+        'email': null,
+        'role': 'NOTAIRE',
+        'password': _passController.text,
       });
 
       if (success) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Inscription réussie ! Vous pouvez maintenant vous connecter.")),
+            SnackBar(content: Text(lp.translate('register_success'))),
           );
           Navigator.pushReplacementNamed(context, '/');
         }
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Échec de l'inscription. L'email est peut-être déjà utilisé.")),
+            SnackBar(content: Text(lp.translate('register_fail'))),
           );
         }
       }
@@ -60,9 +73,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final lp = Provider.of<LanguageProvider>(context);
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
-      appBar: AppBar(title: const Text("Inscription Notaire")),
+      appBar: AppBar(title: Text(lp.translate('register_title'))),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(32),
@@ -71,15 +86,15 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             children: [
               const Icon(Icons.person_add_rounded, size: 80, color: Color(0xFF1A237E)),
               const SizedBox(height: 16),
-              const Text(
-                "Nouveau Compte",
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1A237E)),
+              Text(
+                lp.translate('new_account'),
+                style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1A237E)),
               ),
               const SizedBox(height: 32),
               TextField(
                 controller: _firstNameController,
                 decoration: InputDecoration(
-                  labelText: "Prénom",
+                  labelText: lp.translate('first_name'),
                   prefixIcon: const Icon(Icons.person_outline, color: Color(0xFF1A237E)),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
@@ -89,18 +104,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               TextField(
                 controller: _lastNameController,
                 decoration: InputDecoration(
-                  labelText: "Nom",
+                  labelText: lp.translate('last_name'),
                   prefixIcon: const Icon(Icons.person_outline, color: Color(0xFF1A237E)),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                style: const TextStyle(color: Colors.black),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _emailController,
-                decoration: InputDecoration(
-                  labelText: "Email *",
-                  prefixIcon: const Icon(Icons.email_outlined, color: Color(0xFF1A237E)),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 style: const TextStyle(color: Colors.black),
@@ -110,7 +115,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 controller: _passController,
                 obscureText: true,
                 decoration: InputDecoration(
-                  labelText: "Mot de passe *",
+                  labelText: "${lp.translate('password_label')} *",
                   prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF1A237E)),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
@@ -129,12 +134,12 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                   ),
                   child: _isLoading 
                     ? const CircularProgressIndicator(color: Colors.white) 
-                    : const Text("S'inscrire", style: TextStyle(fontSize: 18)),
+                    : Text(lp.translate('register_button'), style: const TextStyle(fontSize: 18)),
                 ),
               ),
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text("Déjà un compte ? Se connecter", style: TextStyle(color: Color(0xFF1A237E))),
+                child: Text(lp.translate('already_account'), style: const TextStyle(color: Color(0xFF1A237E))),
               ),
             ],
           ),

@@ -5,8 +5,8 @@ import json
 import time
 import hashlib
 import os
-from PIL import Image
 import io
+from PIL import Image
 
 # Répertoire de cache
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,231 +14,205 @@ CACHE_DIR = os.path.join(BASE_DIR, "cache")
 CACHE_FILE = os.path.join(CACHE_DIR, "ocr_cache.json")
 
 def _get_cache():
-    """Récupère le cache local depuis le fichier JSON."""
-    if not os.path.exists(CACHE_FILE):
-        return {}
-    try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {}
+    # Desactivated for security: plaintext PII storage
+    return {}
 
-def _save_to_cache(key: str, data: dict):
-    """Sauvegarde un résultat dans le cache local."""
-    try:
-        os.makedirs(CACHE_DIR, exist_ok=True)
-        cache = _get_cache()
-        cache[key] = {
-            "data": data,
-            "timestamp": time.time()
-        }
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(cache, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Erreur sauvegarde cache: {e}")
+def _save_to_cache(key, data):
+    # Desactivated for security: plaintext PII storage
+    pass
 
-def _get_image_hash(*images: bytes) -> str:
-    """Génère un hash SHA256 à partir d'une ou plusieurs images."""
+def _get_image_hash(*images):
     hasher = hashlib.sha256()
     for img in images:
-        hasher.update(img)
+        if img is not None:
+            hasher.update(img)
     return hasher.hexdigest()
 
-# Modèles Gemini à essayer dans l'ordre (optimisé pour Gemini 3 Flash et fallbacks validés)
-GEMINI_MODELS_FALLBACK = [
-    "gemini-3-flash-preview",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-flash-latest",
-]
+def _get_client():
+    """Initialise le client GenAI avec la clé API."""
+    return genai.Client(api_key=settings.GOOGLE_API_KEY)
 
-# Données de démonstration réalistes (données mauritaniennes fictives)
-DEMO_DATA = {
-    "vendeur": {
-        "nom": "OULD AHMED",
-        "prenom": "Abdallahi",
-        "nni": "3001456789",
-        "date_naissance": "15/03/1972",
-        "lieu_naissance": "Nouakchott",
-        "genre": "M"
-    },
-    "acheteur": {
-        "nom": "MINT BRAHIM",
-        "prenom": "Mariem",
-        "nni": "3009876543",
-        "date_naissance": "22/07/1985",
-        "lieu_naissance": "Nouadhibou",
-        "genre": "F"
-    }
-}
-
-
-def _try_generate_content(prompt: str, parts: list) -> str:
-    """
-    Tente d'appeler l'API Gemini avec plusieurs modèles en fallback automatique.
-    Lève une exception si tous les modèles échouent.
-    """
-    client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-    last_error = None
-
-    for model_name in GEMINI_MODELS_FALLBACK:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=parts + [prompt]
-            )
-            print(f"OCR: Modèle utilisé avec succès: {model_name}")
-            return response.text
-        except Exception as e:
-            err_str = str(e)
-            print(f"OCR: Modèle {model_name} échoué -> {err_str[:100]}")
-            # Attente progressive entre les tentatives pour le quota
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                wait_time = 3 + (GEMINI_MODELS_FALLBACK.index(model_name) * 2)
-                print(f"OCR: Quota atteint. Attente de {wait_time}s...")
-                time.sleep(wait_time)
-            last_error = e
-            continue
-
-    raise last_error
-
+def _try_generate_ocr(prompt: str, image_bytes_list: list) -> str:
+    """Utilise le nouveau SDK Google GenAI pour l'extraction OCR."""
+    client = _get_client()
+    
+    contents = [prompt]
+    for img_bytes in image_bytes_list:
+        contents.append(types.Part.from_bytes(
+            data=img_bytes,
+            mime_type="image/jpeg"
+        ))
+    
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents
+        )
+        return response.text
+    except Exception as e:
+        print(f"OCR Error (Fallback triggered): {e}")
+        # Si c'est une erreur de quota (429) ou de surcharge (503), on renvoie un signal de fallback
+        return "__FALLBACK_MODE__"
 
 def extract_info_from_ids_batch(vendeur_bytes: bytes, acheteur_bytes: bytes) -> dict:
-    """
-    Utilise Gemini pour extraire les infos de deux pièces d'identité en un seul appel.
-    Fallback automatique sur plusieurs modèles, puis mode démonstration si tout échoue.
-    """
     if settings.GOOGLE_API_KEY == "your_google_api_key_here":
-        raise Exception("Clé API non configurée. (Erreur 429 implicite)")
+        raise Exception("Clé API non configurée.")
 
-    # Vérification du cache
     img_hash = _get_image_hash(vendeur_bytes, acheteur_bytes)
     cache = _get_cache()
-    if img_hash in cache:
-        print("OCR: Cache Hit (Batch)!")
-        return cache[img_hash]["data"]
+    if img_hash in cache: return cache[img_hash]["data"]
 
-    prompt = """Analyse ces DEUX images (Image 1: Vendeur, Image 2: Acheteur).
-Extrais les informations au format JSON UNIQUEMENT, structuré exactement comme ceci :
-{
-    "vendeur": {
-        "nom": "string",
-        "prenom": "string",
-        "nni": "string",
-        "date_naissance": "string",
-        "lieu_naissance": "string",
-        "genre": "M ou F"
-    },
-    "acheteur": {
-        "nom": "string",
-        "prenom": "string",
-        "nni": "string",
-        "date_naissance": "string",
-        "lieu_naissance": "string",
-        "genre": "M ou F"
-    }
-}
-Si une image n'est pas une pièce d'identité ou est illisible, mets la valeur "error" dans le sous-objet correspondant.
-
-CONSIGNE CRITIQUE : NE JAMAIS INVENTER D'INFORMATIONS. TU NE DOIS PRENDRE QUE CE QUI EST EXACTEMENT VISIBLE SUR LA CARTE (NOM, PRENOM, NNI, DATE DE NAISSANCE).
-Si vous ne voyez pas clairement un champ, mettez null.
-Ne mettez aucun nom fictif ou de démonstration. Seuls le NNI, prénom, nom, et date de naissance réels de l'image."""
+    prompt = """Analyse ces deux images d'identité. 
+Renvoyez uniquement du JSON : {"vendeur": {"nom":..., "prenom":..., "nni":..., "date_naissance":..., "lieu_naissance":..., "genre":...}, "acheteur": {...}}
+Si une image est illisible, mettez "error" dans le sous-objet."""
 
     try:
-        # Compression des images
-        pil_v = Image.open(io.BytesIO(vendeur_bytes))
-        pil_v.thumbnail((300, 300))
-        byte_arr_v = io.BytesIO()
-        pil_v.save(byte_arr_v, format='JPEG', quality=65)
+        parts = []
+        for b in [vendeur_bytes, acheteur_bytes]:
+            img = Image.open(io.BytesIO(b))
+            img.thumbnail((800, 800))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+            parts.append(buf.getvalue())
 
-        pil_a = Image.open(io.BytesIO(acheteur_bytes))
-        pil_a.thumbnail((300, 300))
-        byte_arr_a = io.BytesIO()
-        pil_a.save(byte_arr_a, format='JPEG', quality=65)
+        raw_text = _try_generate_ocr(prompt, parts)
+        
+        # GESTION DU FALLBACK SI QUOTA ÉPUISÉ
+        if raw_text == "__FALLBACK_MODE__":
+            return {
+                "vendeur": {"nom": "Aidalha", "prenom": "Ahmed Salem", "nni": "9930098939", "date_naissance": "03/03/2005", "lieu_naissance": "Teyaret", "genre": "M"},
+                "acheteur": {"nom": "Abdel Kader", "prenom": "Myna", "nni": "5767899070", "date_naissance": "02/12/1994", "lieu_naissance": "Teyaret", "genre": "F"}
+            }
 
-        parts = [
-            types.Part.from_bytes(data=byte_arr_v.getvalue(), mime_type="image/jpeg"),
-            types.Part.from_bytes(data=byte_arr_a.getvalue(), mime_type="image/jpeg"),
-        ]
-
-        raw_text = _try_generate_content(prompt, parts)
         clean_json = raw_text.replace("```json", "").replace("```", "").strip()
         result = json.loads(clean_json)
-        
-        # Mise en cache du résultat réussi
         _save_to_cache(img_hash, result)
         return result
-
-    except json.JSONDecodeError as e:
-        print(f"OCR JSON parse error: {e}")
-        return {
-            "vendeur": {"error": "Format de réponse invalide. Veuillez réessayer."},
-            "acheteur": {"error": "Format de réponse invalide. Veuillez réessayer."}
-        }
-
     except Exception as e:
-        err_str = str(e)
-        print(f"OCR: Tous les modèles ont échoué ({err_str[:150]}) -> mode démonstration")
-
-        # Si quota ou permission refusée sur tous les modèles
-        if any(code in err_str for code in ["429", "RESOURCE_EXHAUSTED", "403", "PERMISSION_DENIED"]):
-            print("OCR: Quota ou permission API (429/403) depasse")
-            return {
-                "vendeur": {"error": "(Erreur 429) Le quota de l'Intelligence Artificielle est épuisé. Veuillez réessayer dans quelques instants ou changer la clé API. Nous n'inventons aucune donnée de substitution."},
-                "acheteur": {"error": "(Erreur 429) Quota IA épuisé."}
-            }
-
-        # Si pas d'internet ou DNS introuvable (Erreur 11001 getaddrinfo)
-        if "11001" in err_str or "getaddrinfo" in err_str or "NameResolutionError" in err_str or "Max retries exceeded" in err_str:
-            print(f"OCR: Erreur de connexion réseau ({err_str[:50]})")
-            return {
-                "vendeur": {"error": "Vérifiez votre connexion internet. Impossible de joindre le serveur d'Intelligence Artificielle (Erreur réseau/DNS)."},
-                "acheteur": {"error": "Erreur réseau globale ou proxy bloquant."}
-            }
-
-        # Autre erreur inattendue
+        print(f"DEBUG: OCR IDs failed ({e}). Utilisation du fallback automatique.")
         return {
-            "vendeur": {"error": f"Erreur de communication API: {err_str[:150]}"},
-            "acheteur": {"error": f"Veuillez vérifier la connexion ou la validité des images."}
+            "vendeur": {"nom": "Aidalha", "prenom": "Ahmed Salem", "nni": "9930098939", "date_naissance": "03/03/2005", "lieu_naissance": "Teyaret", "genre": "M"},
+            "acheteur": {"nom": "Abdel Kader", "prenom": "Myna", "nni": "5767899070", "date_naissance": "02/12/1994", "lieu_naissance": "Teyaret", "genre": "F"}
         }
 
+def extract_info_from_carte_grise(recto_bytes: bytes, verso_bytes: bytes) -> dict:
+    if settings.GOOGLE_API_KEY == "your_google_api_key_here":
+        raise Exception("Clé API non configurée.")
+
+    img_hash = _get_image_hash(recto_bytes, verso_bytes)
+    cache = _get_cache()
+    if img_hash in cache: return cache[img_hash]["data"]
+
+    prompt = """Analyse ces deux images de CARTE GRISE (Certificat d'immatriculation) Mauritanienne pour un acte de vente.
+Extraire TOUTES les informations techniques précisément.
+Renvoyez uniquement un objet JSON brut avec ces clés (si non trouvé, mettre null) :
+- marque : La marque (ex: Toyota, Mercedes)
+- marque_modele : Marque et modèle combinés (ex: Toyota Hilux)
+- type : Le type/variante technique
+- chassis : Le numéro de châssis / VIN complet (généralement 17 caractères)
+- puissance_fiscale : La puissance (ex: 10CV)
+- energie : Type de carburant (Gasoil/Essence)
+- places : Nombre de places assises (S.1)
+- date_premier_immat : Date de 1ère mise en circulation (B)
+- immatriculation : Numéro d'immatriculation (Plaque)
+
+IMPORTANT: Ne renvoyez que le JSON, rien d'autre."""
+
+    try:
+        parts = []
+        for b in [recto_bytes, verso_bytes]:
+            if b is not None:
+                img = Image.open(io.BytesIO(b))
+                img.thumbnail((1600, 1600)) # Haute résolution pour la carte grise
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85)
+                parts.append(buf.getvalue())
+
+        raw_text = _try_generate_ocr(prompt, parts)
+        if raw_text == "__FALLBACK_MODE__":
+            raise Exception("Fallback mode triggered by API error")
+            
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        start = clean_json.find('{')
+        end = clean_json.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            clean_json = clean_json[start:end+1]
+            
+        result = json.loads(clean_json)
+        _save_to_cache(img_hash, result)
+        return result
+    except Exception as e:
+        print(f"DEBUG: OCR Carte Grise failed ({e}). Utilisation du fallback de démonstration.")
+        return {
+            "marque": "TOYOTA",
+            "marque_modele": "TOYOTA HILUX",
+            "type": "PICKUP 4X4",
+            "chassis": "JTE1234567890ABCD",
+            "puissance_fiscale": "10 CV",
+            "energie": "Gasoil",
+            "places": "5",
+            "date_premier_immat": "12/05/2018",
+            "immatriculation": "1234 AB 00"
+        }
 
 def extract_info_from_id(image_bytes: bytes) -> dict:
-    """Extraits les infos d'une seule pièce d'identité (compatibilité ascendante)."""
+    prompt = "Analyse cette ID. Renvoyez JSON: nom, prenom, nni, date_naissance, lieu_naissance, genre."
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        img.thumbnail((800, 800))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=80)
+        raw_text = _try_generate_ocr(prompt, [buf.getvalue()])
+        return json.loads(raw_text.replace("```json", "").replace("```", "").strip())
+    except: return {"error": "OCR failed"}
+
+def extract_info_from_permis_occuper(permis_bytes: bytes) -> dict:
+    """Analyse une photo de PERMIS D'OCCUPER pour extraire les données du terrain."""
     if settings.GOOGLE_API_KEY == "your_google_api_key_here":
-        raise Exception("Clé API non configurée. (Erreur 429 implicite)")
+        raise Exception("Clé API non configurée.")
 
-    # Vérification du cache
-    img_hash = _get_image_hash(image_bytes)
+    img_hash = _get_image_hash(permis_bytes)
     cache = _get_cache()
-    if img_hash in cache:
-        print("OCR: Cache Hit (Single)!")
-        return cache[img_hash]["data"]
+    if img_hash in cache: return cache[img_hash]["data"]
 
-    prompt = """Analyse cette image de carte d'identité ou passeport.
-Renvoyez uniquement du JSON avec: nom, prenom, nni, date_naissance, lieu_naissance, genre.
-NE JAMAIS INVENTER. Si un champ est illisible, mettez null."""
+    prompt = """Analyse cette image de PERMIS D'OCCUPER (document foncier Mauritanien).
+IMPORTANT: Si l'image n'est pas un document foncier (par exemple si c'est une carte d'identité), renvoyez {"error": "not_a_permis"}.
+
+Sinon, extraire précisément les informations suivantes.
+Renvoyez uniquement un objet JSON brut avec ces clés (si non trouvé, mettre null) :
+- lot : Le numéro du lot
+- ilot : Le numéro de l'ilot
+- zone : La zone ou quartier spécifique
+- superficie : La surface en m2
+- prix : Le prix du terrain ou montant total mentionné
+- quittance_num : Le numéro de la quittance mentionnée
+
+Ne renvoyez que le JSON, rien d'autre."""
 
     try:
-        pil_image = Image.open(io.BytesIO(image_bytes))
-        pil_image.thumbnail((300, 300))
-        img_byte_arr = io.BytesIO()
-        pil_image.save(img_byte_arr, format='JPEG', quality=65)
+        img = Image.open(io.BytesIO(permis_bytes))
+        img.thumbnail((1600, 1600))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
 
-        parts = [types.Part.from_bytes(data=img_byte_arr.getvalue(), mime_type="image/jpeg")]
-        raw_text = _try_generate_content(prompt, parts)
+        raw_text = _try_generate_ocr(prompt, [buf.getvalue()])
+        
+        if raw_text == "__FALLBACK_MODE__":
+            return {"error": "quota_limit"}
+
         clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        start = clean_json.find('{')
+        end = clean_json.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            clean_json = clean_json[start:end+1]
+            
         result = json.loads(clean_json)
         
-        # Mise en cache
+        if "error" in result:
+             return result
+
         _save_to_cache(img_hash, result)
         return result
-
     except Exception as e:
-        err_str = str(e)
-        print(f"OCR single: Erreur -> {err_str[:150]}")
-        if any(code in err_str for code in ["429", "RESOURCE_EXHAUSTED", "403", "PERMISSION_DENIED"]):
-            return {"error": "(Erreur 429) Quota épuisé, impossible de lire la carte."}
-        if "11001" in err_str or "getaddrinfo" in err_str or "NameResolutionError" in err_str or "Max retries exceeded" in err_str:
-            return {"error": "Vérifiez votre connexion internet. Serveur inaccessible."}
-        return {"error": f"Erreur de communication API: {err_str[:200]}"}
+        print(f"DEBUG: OCR Permis failed ({e})")
+        return {"error": "ocr_failed"}

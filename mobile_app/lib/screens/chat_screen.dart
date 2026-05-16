@@ -9,6 +9,8 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:mobile_app/widgets/completion_dialog.dart';
+import 'package:provider/provider.dart';
+import 'package:mobile_app/providers/language_provider.dart';
 
 /// ── Constantes de design (Style Gemini Moderne) ──────────────────────────────
 const kPrimaryColor = Color(0xFF1A237E);
@@ -38,10 +40,23 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   bool _isLoadingSessions = false;
   bool _isSending = false;
   bool _isRecording = false;
+  
+  final TextEditingController _sessionSearchController = TextEditingController();
+  String _sessionSearchQuery = "";
 
   XFile? _vendeurFile;
   XFile? _acheteurFile;
+  XFile? _carteGriseFront;
+  XFile? _carteGriseBack;
+  XFile? _permisOccuper;
   String _selectedActType = "vente_immobilier";
+  
+  // Nouveaux états pour le flux guidé
+  int? _activeDocumentId;
+  bool _isWaitingForPrice = false;
+  String? _waitingForHypothequeField; // 'montant', 'duree', 'conditions'
+  int _currentStep = 0;
+
 
   @override
   void initState() {
@@ -54,6 +69,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _audioRecorder.dispose();
     _scrollController.dispose();
     _controller.dispose();
+    _sessionSearchController.dispose();
     super.dispose();
   }
 
@@ -113,6 +129,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
+  void _resetActState() {
+    setState(() {
+      _vendeurFile = null;
+      _acheteurFile = null;
+      _carteGriseFront = null;
+      _carteGriseBack = null;
+      _permisOccuper = null;
+      _currentStep = 0;
+      _activeDocumentId = null;
+      _isWaitingForPrice = false;
+      _waitingForHypothequeField = null;
+    });
+  }
+
   Future<void> _startNewSession() async {
     try {
       final session = await ApiService.createChatSession();
@@ -120,6 +150,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _currentSessionId = session['id'];
         _messages.clear();
       });
+      _resetActState();
       _loadSessions();
     } catch (e) {
       if (kDebugMode) print("Error creating session: $e");
@@ -128,20 +159,158 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   /// Envoie une réponse vers Gemini et affiche la réponse IA réelle.
   Future<void> _sendMessage(String text) async {
-    if (text.isEmpty || _currentSessionId == null) return;
+    final time = DateTime.now();
+    
+    // CAS PARTICULIER : Intercepter le prix dans le flux guidé (Véhicule)
+    if (_isWaitingForPrice && _activeDocumentId != null) {
+      setState(() {
+        _messages.add({"text": text, "isUser": true, "time": time});
+        _isSending = true;
+        _isWaitingForPrice = false;
+      });
+      _controller.clear();
+      _scrollToBottom();
+      try {
+        final lp = Provider.of<LanguageProvider>(context, listen: false);
+        final lang = lp.currentLocale.languageCode;
+        final completed = await ApiService.completeAct(_activeDocumentId!, {"prix": text}, lang);
+        final newStatus = completed['status'] ?? 'brouillon';
+        final newPdfUrl = ApiService.getFullUrl(completed['pdf_url'] ?? '');
 
-    final lowerText = text.toLowerCase();
-    if (lowerText.contains("mariage")) {
-      _selectedActType = "mariage";
-    } else if (lowerText.contains("véhicule") || lowerText.contains("vehicule") || lowerText.contains("voiture")) {
-      _selectedActType = "vente_vehicule";
-    } else if (lowerText.contains("société") || lowerText.contains("societe") || lowerText.contains("parts")) {
-      _selectedActType = "vente_societe";
-    } else if (lowerText.contains("immobilier") || lowerText.contains("terrain") || lowerText.contains("maison")) {
-      _selectedActType = "vente_immobilier";
+        
+        setState(() {
+          String successKey = 'price_saved';
+          if (_selectedActType == 'vente_immobilier') {
+            successKey = 'price_saved_immobilier';
+          }
+          
+          _messages.add({
+            "text": newStatus == 'valide'
+                ? lp.translate(successKey).replaceFirst('{price}', text)
+                : lp.translate('act_updated_missing'),
+            "isUser": false,
+            "pdfUrl": newPdfUrl,
+            "documentId": _activeDocumentId,
+            "time": DateTime.now()
+          });
+          _activeDocumentId = null;
+        });
+        _scrollToBottom();
+      } catch (e) {
+        final lp = Provider.of<LanguageProvider>(context, listen: false);
+        setState(() {
+          _messages.add({"text": "❌ ${lp.isArabic ? 'خطأ في السعر' : 'Erreur prix'} : $e", "isUser": false, "time": DateTime.now()});
+          _isWaitingForPrice = true;
+        });
+      } finally {
+        setState(() => _isSending = false);
+      }
+      return;
     }
 
-    final time = DateTime.now();
+
+    // CAS PARTICULIER : Intercepter les champs Hypothèque (Flux Guidé)
+    if (_waitingForHypothequeField != null && _activeDocumentId != null) {
+      setState(() {
+        _messages.add({"text": text, "isUser": true, "time": time});
+        _isSending = true;
+      });
+      _controller.clear();
+      _scrollToBottom();
+
+      try {
+        Map<String, String> data = {};
+        String nextField = "";
+        String nextQuestion = "";
+
+        final lp = Provider.of<LanguageProvider>(context, listen: false);
+        if (_waitingForHypothequeField == 'montant') {
+          data = {"montant_dette": text};
+          nextField = "duree";
+          nextQuestion = lp.translate('hypotheque_step2');
+        } else if (_waitingForHypothequeField == 'duree') {
+          data = {"duree_remboursement": text};
+          nextField = "conditions";
+          nextQuestion = lp.translate('hypotheque_step3');
+        } else if (_waitingForHypothequeField == 'conditions') {
+          data = {"conditions_execution": text};
+          nextField = "done";
+          nextQuestion = lp.translate('hypotheque_final');
+        }
+
+
+        final lang = Provider.of<LanguageProvider>(context, listen: false).currentLocale.languageCode;
+        final completed = await ApiService.completeAct(_activeDocumentId!, data, lang);
+        final newPdfUrl = ApiService.getFullUrl(completed['pdf_url'] ?? '');
+        final remaining = List<String>.from(completed['missing_fields'] ?? []);
+
+
+        setState(() {
+          if (nextField == "done" || remaining.isEmpty) {
+            _messages.add({
+              "text": nextQuestion,
+              "isUser": false,
+              "pdfUrl": newPdfUrl,
+              "documentId": _activeDocumentId,
+              "time": DateTime.now()
+            });
+            _waitingForHypothequeField = null;
+            _activeDocumentId = null;
+          } else {
+            _messages.add({
+              "text": lp.translate('field_saved').replaceFirst('{next}', nextQuestion),
+              "isUser": false,
+              "time": DateTime.now()
+            });
+            _waitingForHypothequeField = nextField;
+          }
+        });
+
+        _scrollToBottom();
+      } catch (e) {
+        setState(() {
+          _messages.add({"text": "❌ Erreur : $e", "isUser": false, "time": DateTime.now()});
+        });
+      } finally {
+        setState(() => _isSending = false);
+      }
+      return;
+    }
+
+    final lowerText = text.toLowerCase();
+    bool typeDetected = false;
+    String? newType;
+
+    if (lowerText.contains("mariage") || lowerText.contains("عقد") || lowerText.contains("زواج")) {
+      newType = "mariage";
+      typeDetected = true;
+    } else if (lowerText.contains("véhicule") || lowerText.contains("vehicule") || lowerText.contains("voiture") || lowerText.contains("سيارة") || lowerText.contains("مركبة")) {
+      newType = "vente_vehicule";
+      typeDetected = true;
+    } else if (lowerText.contains("société") || lowerText.contains("societe") || lowerText.contains("parts") || lowerText.contains("شركة") || lowerText.contains("حصص")) {
+      newType = "vente_societe";
+      typeDetected = true;
+    } else if (lowerText.contains("immobilier") || lowerText.contains("terrain") || lowerText.contains("maison") || lowerText.contains("عقار") || lowerText.contains("أرض") || lowerText.contains("بيع")) {
+      newType = "vente_immobilier";
+      typeDetected = true;
+    } else if (lowerText.contains("testament") || lowerText.contains("testement") || lowerText.contains("legs") || lowerText.contains("وصية")) {
+      newType = "testament";
+      typeDetected = true;
+    } else if (lowerText.contains("hypothèque") || lowerText.contains("hypotheque") || lowerText.contains("créance") || lowerText.contains("رهن")) {
+      newType = "hypotheque";
+      typeDetected = true;
+    }
+
+    if (typeDetected && newType != null) {
+      if (newType != _selectedActType) {
+        _resetActState();
+        _selectedActType = newType;
+      }
+    }
+
+
+     // final time already declared above
+
     setState(() {
       _messages.add({"text": text, "isUser": true, "time": time});
       _isSending = true;
@@ -150,11 +319,21 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _scrollToBottom();
 
     try {
-      final result = await ApiService.sendAiMessage(_currentSessionId!, text);
+      final lang = Provider.of<LanguageProvider>(context, listen: false).currentLocale.languageCode;
+      final result = await ApiService.sendAiMessage(_currentSessionId!, text, lang);
+
       final aiText = result['reply'] as String? ?? "Je traite votre demande…";
+      final detectedActType = result['detected_act_type'] as String?;
 
       setState(() {
         _messages.add({"text": aiText, "isUser": false, "time": DateTime.now()});
+        if (detectedActType != null) {
+          if (detectedActType != _selectedActType) {
+            _resetActState();
+            _selectedActType = detectedActType;
+          }
+          if (kDebugMode) print("DEBUG: Detected Act Type from backend: $_selectedActType");
+        }
       });
       _scrollToBottom();
     } catch (e) {
@@ -225,93 +404,312 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _pickImage(ImageSource source) async {
-    final XFile? image = await _picker.pickImage(source: source);
-    if (image == null) return;
+    final XFile? imageFile = await _picker.pickImage(source: source);
+    if (imageFile == null) return;
 
-    final isMariage = _selectedActType == "mariage";
-    final isSociete = _selectedActType == "vente_societe";
-    
-    String labelP1 = "Vendeur";
-    String labelP2 = "Acheteur";
-    if (isMariage) {
-      labelP1 = "Monsieur";
-      labelP2 = "Madame";
-    } else if (isSociete) {
-      labelP1 = "Cédant";
-      labelP2 = "Cessionnaire";
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
+
+    // 1. Déterminer le label en fonction du type d'acte
+    String p1 = lp.isArabic ? "الطرف 1" : "Partie 1";
+    String p2 = lp.isArabic ? "الطرف 2" : "Partie 2";
+
+    if (_selectedActType == "mariage") {
+      p1 = lp.translate("husband");
+      p2 = lp.translate("wife");
+    } else if (_selectedActType == "vente_immobilier" || _selectedActType == "vente_vehicule" || _selectedActType == "vente_societe") {
+      p1 = lp.translate("seller");
+      p2 = lp.translate("buyer");
+    } else if (_selectedActType == "testament") {
+      p1 = lp.translate("testator");
+      p2 = lp.translate("beneficiary");
+    } else if (_selectedActType == "hypotheque") {
+      p1 = lp.translate("debtor");
+      p2 = lp.translate("creditor");
     }
 
-    setState(() {
-      if (_vendeurFile == null) {
-        _vendeurFile = image;
+    if (_currentStep == 0) {
+      // Envoi CI 1
+      setState(() {
+        _vendeurFile = imageFile;
         _messages.add({
-          "text": "📷 Carte d'identité $labelP1 envoyée.",
+          "role": "user",
           "isUser": true,
-          "image": image.path,
+          "text": lp.translate('id_sent_p1').replaceFirst('{label}', p1),
+          "image": imageFile.path,
           "time": DateTime.now()
         });
+      });
+      _scrollToBottom();
+      await Future.delayed(const Duration(seconds: 1));
+      setState(() {
         _messages.add({
-          "text":
-              "Carte d'identité du $labelP1 reçue ✓\n\nMaintenant, veuillez envoyer la carte d'identité de **$labelP2**.",
+          "role": "assistant",
           "isUser": false,
+          "text": lp.translate('id_received_p1').replaceFirst('{label}', p1).replaceFirst('{label2}', p2),
           "time": DateTime.now()
         });
-      } else if (_acheteurFile == null) {
-        _acheteurFile = image;
+        _currentStep = 1;
+      });
+    } else if (_currentStep == 1) {
+      // Envoi CI 2
+      setState(() {
+        _acheteurFile = imageFile;
         _messages.add({
-          "text": "📷 Carte d'identité $labelP2 envoyée.",
+          "role": "user",
           "isUser": true,
-          "image": image.path,
+          "text": lp.translate('id_sent_p2').replaceFirst('{label}', p2),
+          "image": imageFile.path,
           "time": DateTime.now()
         });
-        _messages.add({
-          "text": "⚙️ Analyse des pièces d'identité en cours… Génération d'un acte de type ${_selectedActType == 'mariage' ? 'mariage' : 'vente immobilier'}.",
-          "isUser": false,
-          "time": DateTime.now()
+      });
+      _scrollToBottom();
+      await Future.delayed(const Duration(seconds: 1));
+
+      if (_selectedActType == "vente_vehicule") {
+        setState(() {
+          _messages.add({
+            "role": "assistant",
+            "isUser": false,
+            "text": lp.translate('send_carte_grise_recto'),
+            "time": DateTime.now()
+          });
+          _currentStep = 2;
         });
-        _scrollToBottom();
+      } else if (_selectedActType == "vente_immobilier" || _selectedActType == "hypotheque") {
+        setState(() {
+          _messages.add({
+            "role": "assistant",
+            "isUser": false,
+            "text": lp.translate('send_permis_occuper').replaceFirst('{label}', p2),
+            "time": DateTime.now()
+          });
+          _currentStep = 2;
+        });
+      } else {
+        // Pour les autres actes, on génère directement après les 2 CI
+        String typeTranslated = lp.translate(_selectedActType ?? 'notarial_act');
+        setState(() {
+          _messages.add({
+            "role": "assistant",
+            "isUser": false,
+            "text": lp.translate('analyzing_ids').replaceFirst('{type}', typeTranslated),
+            "time": DateTime.now()
+          });
+        });
         _processIdCards();
       }
-    });
+    } else if (_currentStep == 2 && _selectedActType == "vente_vehicule") {
+      // Envoi Carte Grise Recto
+      setState(() {
+        _carteGriseFront = imageFile;
+        _messages.add({
+          "role": "user",
+          "isUser": true,
+          "text": lp.translate('cg_recto_sent'),
+          "image": imageFile.path,
+          "time": DateTime.now()
+        });
+      });
+      _scrollToBottom();
+      await Future.delayed(const Duration(seconds: 1));
+      setState(() {
+        _messages.add({
+          "role": "assistant",
+          "isUser": false,
+          "text": lp.translate('send_cg_verso'),
+          "time": DateTime.now()
+        });
+        _currentStep = 3;
+      });
+    } else if (_currentStep == 3 && _selectedActType == "vente_vehicule") {
+      // Envoi Carte Grise Verso
+      setState(() {
+        _carteGriseBack = imageFile;
+        _messages.add({
+          "role": "user",
+          "isUser": true,
+          "text": lp.translate('cg_verso_sent'),
+          "image": imageFile.path,
+          "time": DateTime.now()
+        });
+      });
+      _scrollToBottom();
+      await Future.delayed(const Duration(seconds: 1));
+      setState(() {
+        _messages.add({
+          "role": "assistant",
+          "isUser": false,
+          "text": lp.translate('all_pieces_received'),
+          "time": DateTime.now()
+        });
+      });
+      _processIdCards();
+    } else if (_currentStep == 2 && (_selectedActType == "vente_immobilier" || _selectedActType == "hypotheque")) {
+      // Envoi Permis d'occuper
+      setState(() {
+        _permisOccuper = imageFile;
+        _messages.add({
+          "role": "user",
+          "isUser": true,
+          "text": lp.translate('permis_sent'),
+          "image": imageFile.path,
+          "time": DateTime.now()
+        });
+      });
+      _scrollToBottom();
+      await Future.delayed(const Duration(seconds: 1));
+      setState(() {
+        _messages.add({
+          "role": "assistant",
+          "isUser": false,
+          "text": lp.translate('permis_received'),
+          "time": DateTime.now()
+        });
+      });
+      _processIdCards();
+    }
     _scrollToBottom();
   }
 
   Future<void> _processIdCards() async {
     setState(() => _isSending = true);
+    
+    if (_vendeurFile == null || _acheteurFile == null) {
+      setState(() {
+        final lp = Provider.of<LanguageProvider>(context, listen: false);
+        _messages.add({
+          "text": "⚠ Erreur : Les cartes d'identité sont manquantes. Veuillez recommencer le scan.",
+          "isUser": false,
+          "time": DateTime.now()
+        });
+        _isSending = false;
+        _currentStep = 0;
+      });
+      return;
+    }
+
     try {
+      final lang = Provider.of<LanguageProvider>(context, listen: false).currentLocale.languageCode;
       final res = await ApiService.sendIdCards(
         _vendeurFile!, 
         _acheteurFile!, 
-        actType: _selectedActType
+        actType: _selectedActType,
+        carteGriseFront: _carteGriseFront,
+        carteGriseBack: _carteGriseBack,
+        permisOccuper: _permisOccuper,
+        lang: lang,
       );
+      
       final parties = res['parties_extrait'] ?? {};
       final isMariage = _selectedActType == "mariage";
-      final p1Nom = isMariage ? (parties['monsieur']?['nom'] ?? '—') : (parties['vendeur']?['nom'] ?? '—');
-      final p2Nom = isMariage ? (parties['madame']?['nom'] ?? '—') : (parties['acheteur']?['nom'] ?? '—');
-      final p1Label = isMariage ? "Monsieur" : "Vendeur";
-      final p2Label = isMariage ? "Madame" : "Acheteur";
+      final isTestament = _selectedActType == "testament";
+      final isHypotheque = _selectedActType == "hypotheque";
+      
+      final p1Nom = isMariage ? (parties['monsieur']?['nom'] ?? '—') : (isTestament ? (parties['testateur']?['nom'] ?? '—') : (isHypotheque ? (parties['debiteur']?['nom'] ?? '—') : (parties['vendeur']?['nom'] ?? '—')));
+      final p2Nom = isMariage ? (parties['madame']?['nom'] ?? '—') : (isTestament ? (parties['beneficiaire']?['nom'] ?? '—') : (isHypotheque ? (parties['creancier']?['nom'] ?? '—') : (parties['acheteur']?['nom'] ?? '—')));
+      
+      final lp = Provider.of<LanguageProvider>(context, listen: false);
+      String typeTranslated = lp.translate(_selectedActType ?? 'notarial_act');
+      
+      String p1Label = "Partie 1";
+      String p2Label = "Partie 2";
+      if (_selectedActType == "mariage") {
+        p1Label = lp.translate("husband");
+        p2Label = lp.translate("wife");
+      } else if (_selectedActType == "vente_immobilier" || _selectedActType == "vente_vehicule" || _selectedActType == "vente_societe") {
+        p1Label = lp.translate("seller");
+        p2Label = lp.translate("buyer");
+      } else if (_selectedActType == "testament") {
+        p1Label = lp.translate("testator");
+        p2Label = lp.translate("beneficiary");
+      } else if (_selectedActType == "hypotheque") {
+        p1Label = lp.translate("debtor");
+        p2Label = lp.translate("creditor");
+      }
       
       final docId = res['document_id'] as int?;
       final pdfUrl = ApiService.getFullUrl(res['pdf_url'] ?? '');
       final missingFields = List<String>.from(res['missing_fields'] ?? []);
 
       setState(() {
+        _activeDocumentId = docId;
         _messages.add({
-          "text":
-              "✅ Brouillon d'acte de ${_selectedActType == 'mariage' ? 'mariage' : 'vente'} généré !\n\n• **$p1Label** : $p1Nom\n• **$p2Label** : $p2Nom",
+          "text": lp.translate('act_generated_success')
+              .replaceFirst('{type}', typeTranslated)
+              .replaceFirst('{label1}', p1Label)
+              .replaceFirst('{name1}', p1Nom)
+              .replaceFirst('{label2}', p2Label)
+              .replaceFirst('{name2}', p2Nom),
           "isUser": false,
           "pdfUrl": pdfUrl,
           "documentId": docId,
           "missingFields": missingFields,
           "time": DateTime.now()
         });
+        
+        // Réinitialisation des fichiers
         _vendeurFile = null;
         _acheteurFile = null;
+        _carteGriseFront = null;
+        _carteGriseBack = null;
+        _permisOccuper = null;
       });
       _scrollToBottom();
 
-      // Si des champs sont manquants, ouvrir le formulaire de complétion
-      if (missingFields.isNotEmpty && docId != null) {
+      // Flux spécifique pour la vente de véhicule
+      if (_selectedActType == "vente_vehicule" && docId != null) {
+        if (missingFields.any((f) => f.contains("Prix"))) {
+          setState(() => _isWaitingForPrice = true);
+          await Future.delayed(const Duration(milliseconds: 700));
+          setState(() {
+            _messages.add({
+              "text": lp.translate('ask_price_vehicule'),
+              "isUser": false,
+              "time": DateTime.now()
+            });
+          });
+          _scrollToBottom();
+          return;
+        }
+      }
+
+      // Flux spécifique pour la vente immobilière
+      if (_selectedActType == "vente_immobilier" && docId != null) {
+        if (missingFields.any((f) => f.contains("Prix") || f.contains("prix"))) {
+          setState(() => _isWaitingForPrice = true);
+          await Future.delayed(const Duration(milliseconds: 700));
+          setState(() {
+            _messages.add({
+              "text": lp.translate('ask_price_immobilier'),
+              "isUser": false,
+              "time": DateTime.now()
+            });
+          });
+          _scrollToBottom();
+          return;
+        }
+      }
+
+      // Flux spécifique pour l'hypothèque
+      if (_selectedActType == "hypotheque" && docId != null) {
+        if (missingFields.isNotEmpty) {
+          setState(() => _waitingForHypothequeField = 'montant');
+          await Future.delayed(const Duration(milliseconds: 700));
+          setState(() {
+            _messages.add({
+              "text": lp.translate('hypotheque_step1'),
+              "isUser": false,
+              "time": DateTime.now()
+            });
+          });
+          _scrollToBottom();
+          return;
+        }
+      }
+
+      if (missingFields.isNotEmpty && docId != null && 
+          _selectedActType != "vente_immobilier" && 
+          _selectedActType != "hypotheque") {
         await Future.delayed(const Duration(milliseconds: 700));
         if (mounted) {
           await _showCompletionDialog(docId, missingFields, pdfUrl);
@@ -322,18 +720,26 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         await ApiService.addChatMessage(
             _currentSessionId!,
             "assistant",
-            "Brouillon généré — $p1Label: $p1Nom, $p2Label: $p2Nom",
+            lp.translate('draft_generated_log')
+                .replaceFirst('{p1}', p1Label)
+                .replaceFirst('{name1}', p1Nom)
+                .replaceFirst('{p2}', p2Label)
+                .replaceFirst('{name2}', p2Nom),
             "pdf");
       }
     } catch (e) {
       setState(() {
+        final lp = Provider.of<LanguageProvider>(context, listen: false);
         _messages.add({
-          "text": "❌ Erreur lors de la génération : $e",
+          "text": lp.translate('generation_error').replaceFirst('{error}', e.toString()),
           "isUser": false,
           "time": DateTime.now()
         });
         _vendeurFile = null;
         _acheteurFile = null;
+        _carteGriseFront = null;
+        _carteGriseBack = null;
+        _permisOccuper = null;
       });
     } finally {
       setState(() => _isSending = false);
@@ -354,13 +760,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (controllers.isEmpty) return;
 
     setState(() {
+      final lp = Provider.of<LanguageProvider>(context, listen: false);
+      String msg = lp.translate('completion_needed').replaceFirst('{count}', controllers.length.toString());
+      
+      if (_selectedActType == "vente_vehicule" && missingFields.any((f) => f.contains("Prix"))) {
+        msg = lp.translate('cg_extracted_price_needed');
+      }
+
       _messages.add({
-        "text":
-            "⚠️ L'acte est incomplet. ${controllers.length} information(s) manquante(s).\n\nUn formulaire va s'ouvrir pour les compléter.",
+        "text": msg,
         "isUser": false,
         "time": DateTime.now()
       });
     });
+
 
     final result = await showDialog<Map<String, String>>(
       context: context,
@@ -386,7 +799,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       _scrollToBottom();
 
       try {
-        final completed = await ApiService.completeAct(docId, result);
+        final lp = Provider.of<LanguageProvider>(context, listen: false);
+        final lang = lp.currentLocale.languageCode;
+        final completed = await ApiService.completeAct(docId, result, lang);
         final newStatus = completed['status'] ?? 'brouillon';
         final newPdfUrl = ApiService.getFullUrl(completed['pdf_url'] ?? '');
         final remaining =
@@ -395,8 +810,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         setState(() {
           _messages.add({
             "text": newStatus == 'valide'
-                ? "✅ **Acte finalisé et validé !**\n\nLe PDF officiel est prêt."
-                : "📄 Acte mis à jour. ${remaining.length} champ(s) encore manquant(s).",
+                ? lp.translate('finalized_act')
+                : lp.translate('act_updated_missing'),
             "isUser": false,
             "pdfUrl": newPdfUrl,
             "documentId": docId,
@@ -408,7 +823,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       } catch (e) {
         setState(() {
           _messages.add({
-            "text": "❌ Erreur lors de la finalisation : $e",
+            "text": "❌ Erreur : $e",
             "isUser": false,
             "time": DateTime.now()
           });
@@ -418,9 +833,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       }
     } else {
       setState(() {
+        final lp = Provider.of<LanguageProvider>(context, listen: false);
         _messages.add({
-          "text":
-              "Formulaire annulé. Vous pouvez télécharger le brouillon ou compléter plus tard.",
+          "text": lp.translate('form_cancelled'),
           "isUser": false,
           "pdfUrl": oldPdfUrl,
           "documentId": docId,
@@ -432,16 +847,17 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   void _handleLogout() {
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Déconnexion"),
-        content: const Text("Voulez-vous vraiment vous déconnecter Maître ?"),
+        title: Text(lp.translate('logout')),
+        content: Text(lp.translate('logout_confirm')),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text("Annuler")),
+              child: Text(lp.translate('cancel'))),
           ElevatedButton(
             onPressed: () async {
               await ApiService.logout();
@@ -452,7 +868,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             },
             style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red, foregroundColor: Colors.white),
-            child: const Text("Déconnexion"),
+            child: Text(lp.translate('logout')),
           ),
         ],
       ),
@@ -460,6 +876,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   void _showAttachmentMenu() {
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -471,8 +888,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             children: [
               ListTile(
                 leading: const Icon(Icons.camera_alt, color: kNavy),
-                title: const Text('Appareil photo'),
-                subtitle: const Text('Carte d\'identité en direct'),
+                title: Text(lp.isArabic ? "الكاميرا" : "Appareil photo"),
+                subtitle: Text(lp.isArabic ? "بطاقة الهوية مباشرة" : "Carte d\'identité en direct"),
                 onTap: () {
                   Navigator.pop(context);
                   _pickImage(ImageSource.camera);
@@ -480,8 +897,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               ),
               ListTile(
                 leading: const Icon(Icons.photo_library, color: kNavy),
-                title: const Text('Galerie photo'),
-                subtitle: const Text('Sélectionner depuis l\'album'),
+                title: Text(lp.isArabic ? "معرض الصور" : "Galerie photo"),
+                subtitle: Text(lp.isArabic ? "اختر من الألبوم" : "Sélectionner depuis l\'album"),
                 onTap: () {
                   Navigator.pop(context);
                   _pickImage(ImageSource.gallery);
@@ -494,32 +911,37 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  void _showActTypeSelection() {
+  void _showActTypeSelection(LanguageProvider lp) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) => Container(
         padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Quel type d'acte souhaitez-vous générer ?",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 20),
-            _buildActOption(Icons.home_work_outlined, "Vente Immobilière", "vente_immobilier"),
-            _buildActOption(Icons.directions_car_outlined, "Vente de Véhicule", "vente_vehicule"),
-            _buildActOption(Icons.business_outlined, "Vente de Société (Parts)", "vente_societe"),
-            _buildActOption(Icons.favorite_outline, "Acte de Mariage", "mariage"),
-            const SizedBox(height: 10),
-          ],
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(lp.translate('act_type_q'),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 20),
+              _buildActOption(Icons.home_work_outlined, lp.translate('immobilier'), "vente_immobilier"),
+              _buildActOption(Icons.directions_car_outlined, lp.translate('vehicule'), "vente_vehicule"),
+              _buildActOption(Icons.business_outlined, lp.translate('societe'), "vente_societe"),
+              _buildActOption(Icons.favorite_outline, lp.translate('mariage'), "mariage"),
+              _buildActOption(Icons.menu_book_outlined, lp.translate('testament'), "testament"),
+              _buildActOption(Icons.security_outlined, lp.translate('hypotheque'), "hypotheque"),
+              const SizedBox(height: 10),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildActOption(IconData icon, String title, String code) {
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
     return ListTile(
       leading: Icon(icon, color: kNavy),
       title: Text(title),
@@ -529,15 +951,34 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           _selectedActType = code;
           _vendeurFile = null;
           _acheteurFile = null;
+          _carteGriseFront = null;
+          _carteGriseBack = null;
+          _permisOccuper = null;
+          _activeDocumentId = null;
+          _isWaitingForPrice = false;
+          
           final isMariage = code == "mariage";
-          final label = isMariage ? "de Monsieur" : "du Vendeur";
+          final isTestament = code == "testament";
+          final isHypotheque = code == "hypotheque";
+          
+          String label;
+          if (isMariage) {
+            label = lp.translate('husband');
+          } else if (isTestament) {
+            label = lp.translate('testator');
+          } else if (isHypotheque) {
+            label = lp.translate('debtor');
+          } else {
+            label = lp.translate('seller');
+          }
+
           _messages.add({
-            "text": "Démarrage : $title",
+            "text": lp.translate('start_chat_title').replaceFirst('{title}', title),
             "isUser": true,
             "time": DateTime.now()
           });
           _messages.add({
-            "text": "Très bien Maître. Veuillez envoyer la carte d'identité $label.",
+            "text": lp.translate('start_chat_id_request').replaceFirst('{label}', label),
             "isUser": false,
             "time": DateTime.now()
           });
@@ -549,27 +990,28 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    final notaryName = ApiService.notaryName ?? "Maître";
+    final lp = Provider.of<LanguageProvider>(context);
+    final notaryName = ApiService.notaryName ?? lp.translate('welcome_back');
 
     return Scaffold(
-      backgroundColor: kBgLight,
-      drawer: _buildDrawer(),
-      appBar: _buildAppBar(),
+      backgroundColor: Colors.white,
+      drawer: _buildDrawer(lp),
+      appBar: _buildAppBar(lp),
       body: Column(
         children: [
           Expanded(
             child: _messages.isEmpty
-                ? _buildWelcomeScreen(notaryName)
-                : _buildMessageList(),
+                ? _buildWelcomeScreen(notaryName, lp)
+                : _buildMessageList(lp),
           ),
           if (_isSending) _buildTypingIndicator(),
-          _buildInputBar(),
+          _buildInputBar(lp),
         ],
       ),
     );
   }
 
-  PreferredSizeWidget _buildAppBar() {
+  PreferredSizeWidget _buildAppBar(LanguageProvider lp) {
     return AppBar(
       elevation: 0,
       backgroundColor: Colors.transparent,
@@ -577,8 +1019,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       title: const SizedBox.shrink(), // Le titre est dans l'écran d'accueil
       centerTitle: true,
       actions: [
+        TextButton.icon(
+          onPressed: () => lp.toggleLanguage(),
+          icon: const Icon(Icons.language, color: kNavy, size: 20),
+          label: Text(
+            lp.isArabic ? "FR" : "AR",
+            style: const TextStyle(color: kNavy, fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+        ),
         Padding(
-          padding: const EdgeInsets.only(right: 16.0),
+          padding: const EdgeInsets.only(right: 8.0, left: 8.0),
           child: InkWell(
             onTap: () => Navigator.pushNamed(context, '/profile'),
             child: Container(
@@ -598,110 +1048,150 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildDrawer() {
+  Widget _buildDrawer(LanguageProvider lp) {
     return Drawer(
       child: Column(
         children: [
           UserAccountsDrawerHeader(
             decoration: const BoxDecoration(color: kNavy),
-            accountName: Text(ApiService.notaryName ?? "Notaire",
+            accountName: Text(ApiService.notaryName ?? lp.translate('welcome_back'),
                 style: const TextStyle(fontWeight: FontWeight.bold)),
-            accountEmail: const Text("Professionnel du droit",
-                style: TextStyle(fontSize: 12)),
+            accountEmail: Text(lp.isArabic ? "موثق محترف" : "Professionnel du droit",
+                style: const TextStyle(fontSize: 12)),
             currentAccountPicture: const CircleAvatar(
                 backgroundColor: kWhite,
                 child: Icon(Icons.gavel, color: kNavy, size: 30)),
           ),
           ListTile(
             leading: const Icon(Icons.add_comment_outlined, color: kNavy),
-            title: const Text("Nouvelle Discussion"),
+            title: Text(lp.translate('new_chat')),
             onTap: () {
               Navigator.pop(context);
               _startNewSession();
             },
           ),
-          ListTile(
-            leading: const Icon(Icons.person_outline, color: kNavy),
-            title: const Text("Mon Profil"),
-            onTap: () {
-              Navigator.pop(context);
-              Navigator.pushNamed(context, '/profile');
-            },
-          ),
+
           ListTile(
             leading:
                 const Icon(Icons.folder_outlined, color: kNavy),
-            title: const Text("Mes Actes"),
+            title: Text(lp.translate('my_acts')),
             onTap: () {
               Navigator.pop(context);
               Navigator.pushNamed(context, '/documents');
             },
           ),
+          ListTile(
+            leading: const Icon(Icons.search_outlined, color: kNavy),
+            title: Text(lp.translate('search_filter')),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/search');
+            },
+          ),
           if (ApiService.isAdmin)
             ListTile(
               leading: const Icon(Icons.people_outline, color: kNavy),
-              title: const Text("Gestion des Notaires"),
+              title: Text(lp.translate('manage_users')),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.pushNamed(context, '/admin/users');
               },
             ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(children: [
-              Icon(Icons.history, size: 14, color: Colors.grey),
-              SizedBox(width: 6),
-              Text("HISTORIQUE RÉCENT",
-                  style: TextStyle(
+              const Icon(Icons.history, size: 14, color: Colors.grey),
+              const SizedBox(width: 6),
+              Text(lp.translate('history_title'),
+                  style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
                       color: Colors.grey,
                       letterSpacing: 0.5)),
             ]),
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
+            child: TextField(
+              controller: _sessionSearchController,
+              onChanged: (value) {
+                setState(() {
+                  _sessionSearchQuery = value.toLowerCase();
+                });
+              },
+              decoration: InputDecoration(
+                hintText: lp.translate('search_chat_hint'),
+                hintStyle: const TextStyle(fontSize: 13),
+                prefixIcon: const Icon(Icons.search, size: 18),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: Colors.grey.shade200),
+                ),
+              ),
+            ),
+          ),
           Expanded(
             child: _isLoadingSessions
                 ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    itemCount: _sessions.length,
-                    itemBuilder: (context, index) {
-                      final s = _sessions[index];
-                      final isCurrent = s['id'] == _currentSessionId;
-                      return ListTile(
-                        leading: Icon(Icons.chat_bubble_outline,
-                            size: 16,
-                            color: isCurrent ? kNavy : Colors.grey),
-                        title: Text(s['title'],
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                fontSize: 13,
-                                color: isCurrent ? kNavy : null,
-                                fontWeight: isCurrent
-                                    ? FontWeight.bold
-                                    : FontWeight.normal)),
-                        subtitle: Text(
-                          DateFormat('dd/MM HH:mm')
-                              .format(DateTime.parse(s['created_at'])),
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                        selected: isCurrent,
-                        selectedTileColor: kNavy.withOpacity(0.05),
-                        onTap: () {
-                          Navigator.pop(context);
-                          _loadMessages(s['id']);
+                : Builder(
+                    builder: (context) {
+                      final filteredSessions = _sessions.where((s) {
+                        return s['title'].toString().toLowerCase().contains(_sessionSearchQuery);
+                      }).toList();
+
+                      if (filteredSessions.isEmpty && _sessionSearchQuery.isNotEmpty) {
+                        return Center(child: Text(lp.translate('no_results'), style: const TextStyle(fontSize: 12, color: Colors.grey)));
+                      }
+
+                      return ListView.builder(
+                        itemCount: filteredSessions.length,
+                        itemBuilder: (context, index) {
+                          final s = filteredSessions[index];
+                          final isCurrent = s['id'] == _currentSessionId;
+                          return ListTile(
+                            leading: Icon(Icons.chat_bubble_outline,
+                                size: 16,
+                                color: isCurrent ? kNavy : Colors.grey),
+                            title: Text(s['title'],
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color: isCurrent ? kNavy : null,
+                                    fontWeight: isCurrent
+                                        ? FontWeight.bold
+                                        : FontWeight.normal)),
+                            subtitle: Text(
+                              DateFormat('dd/MM HH:mm')
+                                  .format(DateTime.parse(s['created_at'])),
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                            selected: isCurrent,
+                            selectedTileColor: kNavy.withOpacity(0.05),
+                            onTap: () {
+                              Navigator.pop(context);
+                              _loadMessages(s['id']);
+                            },
+                          );
                         },
                       );
                     },
                   ),
           ),
+
         ],
       ),
     );
   }
 
-  Widget _buildWelcomeScreen(String name) {
+  Widget _buildWelcomeScreen(String name, LanguageProvider lp) {
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -709,36 +1199,36 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 10),
-            Text("Bonjour $name,",
+            Text("${lp.translate('welcome_back')} $name,",
                 style: const TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w400,
                     color: Colors.black54)),
-            const Text("Par où commencer ?",
-                style: TextStyle(
+            Text(lp.translate('start_where'),
+                style: const TextStyle(
                     fontSize: 32,
                     fontWeight: FontWeight.bold,
                     color: Colors.black87)),
             const SizedBox(height: 30),
             _buildActionCard(
               Icons.camera_alt_outlined,
-              "Générer un acte",
-              "Sélectionnez le type d'acte et scannez les CIN.",
-              onTap: _showActTypeSelection,
+              lp.translate('generate_act'),
+              lp.translate('generate_act_desc'),
+              onTap: () => _showActTypeSelection(lp),
               badgeText: "IA",
             ),
             _buildActionCard(
               Icons.description_outlined,
-              "Consulter mes documents",
-              "Accédez aux actes déjà générés et validés.",
+              lp.translate('view_docs'),
+              lp.translate('view_docs_desc'),
               onTap: () => Navigator.pushNamed(context, '/documents'),
             ),
             _buildActionCard(
               Icons.gavel_outlined,
-              "Conseil juridique",
-              "Posez une question à l'IA notariale.",
+              lp.translate('legal_advice'),
+              lp.translate('legal_advice_desc'),
               onTap: () =>
-                  _sendMessage("Bonjour Maître, comment puis-je vous aider ?"),
+                  _sendMessage(lp.isArabic ? "مرحباً يا أستاذ، كيف يمكنني مساعدتك؟" : "Bonjour Maître, comment puis-je vous aider ?"),
               badgeText: "Gemini",
             ),
           ],
@@ -749,34 +1239,48 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   Widget _buildActionCard(IconData icon, String title, String subtitle,
       {VoidCallback? onTap, String? badgeText}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        decoration: BoxDecoration(
-          color: kWhite,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.black.withOpacity(0.03)),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: Colors.black54, size: 24),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Text(title,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+        border: Border.all(color: Colors.black.withOpacity(0.05)),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.black87, size: 22),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  title,
                   style: const TextStyle(
-                      fontWeight: FontWeight.w500, fontSize: 16, color: Colors.black87)),
-            ),
-            const Icon(Icons.chevron_right, color: Colors.black26, size: 20),
-          ],
+                    fontWeight: FontWeight.w500,
+                    fontSize: 15,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios_rounded, color: Colors.black26, size: 14),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildMessageList() {
+  Widget _buildMessageList(LanguageProvider lp) {
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
@@ -792,6 +1296,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           missingFields: msg["missingFields"] != null ? List<String>.from(msg["missingFields"]) : null,
           time: msg["time"],
           actType: _selectedActType,
+          lp: lp,
         );
       },
     );
@@ -834,7 +1339,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildInputBar() {
+  Widget _buildInputBar(LanguageProvider lp) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       decoration: const BoxDecoration(color: Colors.transparent),
@@ -852,15 +1357,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             ),
             IconButton(
               icon: const Icon(Icons.tune_rounded, color: Colors.black54),
-              onPressed: () {},
+              onPressed: () => Navigator.pushNamed(context, '/search'),
             ),
             Expanded(
               child: TextField(
                 controller: _controller,
-                decoration: const InputDecoration(
-                  hintText: "Saisissez votre message...",
+                textAlign: lp.isArabic ? TextAlign.right : TextAlign.left,
+                decoration: InputDecoration(
+                  hintText: lp.translate('send_hint'),
                   border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                 ),
                 onSubmitted: (value) => _sendMessage(value),
               ),
@@ -896,6 +1402,8 @@ class _ChatBubble extends StatelessWidget {
   final DateTime? time;
   final String actType;
 
+  final LanguageProvider lp;
+
   const _ChatBubble({
     this.text,
     this.imagePath,
@@ -905,7 +1413,40 @@ class _ChatBubble extends StatelessWidget {
     this.missingFields,
     this.time,
     required this.actType,
+    required this.lp,
   });
+
+  void _showFullImage(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: imagePath != null
+                    ? (kIsWeb
+                        ? Image.network(imagePath!, fit: BoxFit.contain)
+                        : Image.file(dart_io.File(imagePath!), fit: BoxFit.contain))
+                    : const SizedBox.shrink(),
+              ),
+            ),
+            Positioned(
+              top: 40,
+              right: 20,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -950,23 +1491,31 @@ class _ChatBubble extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (imagePath != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: kIsWeb
-                          ? Image.network(imagePath!,
-                              height: 140,
-                              width: double.infinity,
-                              fit: BoxFit.cover)
-                          : Image.file(dart_io.File(imagePath!),
-                              height: 140,
-                              width: double.infinity,
-                              fit: BoxFit.cover),
+                    GestureDetector(
+                      onTap: () => _showFullImage(context),
+                      child: Hero(
+                        tag: imagePath!,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: kIsWeb
+                              ? Image.network(imagePath!,
+                                  height: 140,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover)
+                              : Image.file(dart_io.File(imagePath!),
+                                  height: 140,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover),
+                        ),
+                      ),
                     ),
                   if (text != null && text!.isNotEmpty) ...[
                     if (imagePath != null) const SizedBox(height: 8),
-                    Text(text!,
-                        style: const TextStyle(
-                            fontSize: 14, color: Colors.black87, height: 1.4)),
+                    SelectableText(
+                      text!,
+                      style: const TextStyle(
+                          fontSize: 14, color: Colors.black87, height: 1.4),
+                    ),
                   ],
                   if (pdfUrl != null) ...[
                     const SizedBox(height: 12),
@@ -989,8 +1538,8 @@ class _ChatBubble extends StatelessWidget {
                                     )));
                           },
                           icon: const Icon(Icons.picture_as_pdf, size: 16),
-                          label: const Text("Voir PDF",
-                              style: TextStyle(fontSize: 12)),
+                          label: Text(lp.translate('see_pdf'),
+                              style: const TextStyle(fontSize: 12)),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: kPrimaryColor,
                             foregroundColor: Colors.white,

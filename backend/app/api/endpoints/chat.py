@@ -97,6 +97,7 @@ def add_message(
 class AiChatRequest(BaseModel):
     session_id: int
     message: str
+    lang: Optional[str] = "fr"
 
 @router.post("/ai-reply")
 def ai_reply(
@@ -138,16 +139,22 @@ def ai_reply(
     messages = [{"role": m.role, "content": m.content} for m in history]
 
     # Appel Gemini avec le contexte du notaire
+    lang = request.lang or "fr"
+    lang_name = "arabe" if lang == "ar" else "français"
+    
     system_prompt = (
         f"Vous êtes l'assistant IA personnel de Maître {current_user.full_name or 'le Notaire'}, "
         f"notaire à {current_user.bureau or 'Nouakchott'}, Mauritanie. "
         "Vous êtes expert en droit notarial mauritanien. "
-        "Répondez de façon professionnelle, concise et en français. "
+        f"Répondez de façon professionnelle, concise et en {lang_name}. "
         "Pour les actes de vente, aidez à compléter les informations manquantes : "
         "prix, quartier, moughataa, numéro de parcelle, surface."
     )
 
-    ai_text = chat_with_gemini(messages, system_prompt)
+    ai_response = chat_with_gemini(messages, system_prompt, lang=lang)
+    
+    # Handle dict response (used for metadata/mode detection)
+    ai_text = ai_response["reply"] if isinstance(ai_response, dict) else ai_response
 
     # Sauvegarder la réponse IA
     ai_msg = ChatMessage(
@@ -162,5 +169,7 @@ def ai_reply(
 
     return {
         "reply": ai_text,
-        "created_at": ai_msg.created_at
+        "created_at": ai_msg.created_at,
+        "detected_act_type": ai_response.get("detected_act_type") if isinstance(ai_response, dict) else None
     }
+

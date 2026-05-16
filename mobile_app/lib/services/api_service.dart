@@ -6,25 +6,27 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class ApiService {
   static String baseUrl = kIsWeb
-      ? "http://127.0.0.1:8000/api/v1"
+      ? "http://localhost:8000/api/v1"
       : (defaultTargetPlatform == TargetPlatform.android
           ? "http://10.0.2.2:8000/api/v1"
-          : "http://127.0.0.1:8000/api/v1");
+          : "http://localhost:8000/api/v1");
 
   static String baseOrigin = kIsWeb
-      ? "http://127.0.0.1:8000"
+      ? "http://localhost:8000"
       : (defaultTargetPlatform == TargetPlatform.android
           ? "http://10.0.2.2:8000"
-          : "http://127.0.0.1:8000");
+          : "http://localhost:8000");
 
   static const _storage = FlutterSecureStorage();
   static String? _token;
   static String? _notaryName;
   static String? _userRole;
 
+  static String? get token => _token;
   static String? get notaryName => _notaryName;
   static bool get isAuthenticated => _token != null;
-  static bool get isAdmin => _userRole == 'admin';
+  static bool get isAdmin => _userRole?.toLowerCase() == 'admin';
+  static bool get isNotaire => _userRole?.toLowerCase() == 'notaire';
 
   static Future<void> init() async {
     _token = await _storage.read(key: 'auth_token');
@@ -67,25 +69,76 @@ class ApiService {
 
   // ── Auth ──────────────────────────────────────────────────────────────────
 
-  static Future<bool> login(String username, String password) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/auth/login'),
-      body: {'username': username, 'password': password},
-    );
+  static Future<Map<String, dynamic>> login(String username, String password) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/login'),
+        body: {'username': username, 'password': password},
+      );
 
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      _token = data['access_token'];
-      _notaryName = data['user']['full_name'];
-      _userRole = data['user']['role']?.toString();
-      
-      await _storage.write(key: 'auth_token', value: _token);
-      await _storage.write(key: 'notary_name', value: _notaryName);
-      await _storage.write(key: 'user_role', value: _userRole);
-      
-      return true;
+      if (response.statusCode == 200) {
+        final data = json.decode(utf8.decode(response.bodyBytes));
+        if (data.containsKey('requires_otp') && data['requires_otp'] == true) {
+          return {
+            'requires_otp': true, 
+            'email': data['email'],
+            'phone_number': data['phone_number']
+          };
+        }
+        
+        _token = data['access_token'];
+        _notaryName = data['user']['full_name'];
+        _userRole = data['user']['role']?.toString();
+        
+        await _storage.write(key: 'auth_token', value: _token);
+        await _storage.write(key: 'notary_name', value: _notaryName);
+        await _storage.write(key: 'user_role', value: _userRole);
+        
+        return {'success': true};
+      }
+      return {'success': false, 'error': 'Identifiants invalides'};
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
     }
-    return false;
+  }
+
+  static Future<bool> verifyOtp(String email, String code) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/verify-otp'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'email': email, 'code': code}),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(utf8.decode(response.bodyBytes));
+        _token = data['access_token'];
+        _notaryName = data['user']['full_name'];
+        _userRole = data['user']['role']?.toString();
+        
+        await _storage.write(key: 'auth_token', value: _token);
+        await _storage.write(key: 'notary_name', value: _notaryName);
+        await _storage.write(key: 'user_role', value: _userRole);
+        
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<bool> resendOtp(String email) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/resend-otp'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'email': email}),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
   }
 
   static Future<void> logout() async {
@@ -145,15 +198,17 @@ class ApiService {
 
   /// Envoie un message et reçoit une vraie réponse de Gemini IA.
   static Future<Map<String, dynamic>> sendAiMessage(
-      int sessionId, String message) async {
+      int sessionId, String message, [String lang = "fr"]) async {
     final response = await http.post(
       Uri.parse('$baseUrl/chat/ai-reply'),
       headers: _getHeaders(true),
       body: json.encode({
         'session_id': sessionId,
         'message': message,
+        'lang': lang,
       }),
     );
+
     if (response.statusCode == 200) {
       return json.decode(utf8.decode(response.bodyBytes));
     }
@@ -181,13 +236,39 @@ class ApiService {
     throw Exception('Erreur lors de la récupération des documents');
   }
 
+  static Future<List<dynamic>> searchDocuments({String? q, String? actType}) async {
+    var url = '$baseUrl/search/documents';
+    final params = <String>[];
+    if (q != null && q.isNotEmpty) params.add('q=${Uri.encodeComponent(q)}');
+    if (actType != null && actType.isNotEmpty) params.add('act_type=$actType');
+    
+    if (params.isNotEmpty) url += '?${params.join('&')}';
+    
+    final response = await http.get(
+      Uri.parse(url),
+      headers: _getHeaders(),
+    );
+    
+    if (response.statusCode == 200) return json.decode(response.body);
+    return [];
+  }
+
   // ── ID Cards & Acte de Vente ──────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> sendIdCards(
-      XFile vendeur, XFile acheteur, {String actType = "vente_immobilier"}) async {
+      XFile vendeur, XFile acheteur, {
+      String actType = "vente_immobilier",
+      XFile? carteGriseFront,
+      XFile? carteGriseBack,
+      XFile? permisOccuper,
+      String lang = "fr"
+  }) async {
     var uri = Uri.parse('$baseUrl/id-processing/from-id-cards');
-    // Ajouter act_type comme paramètre de requête
-    uri = uri.replace(queryParameters: {'act_type': actType});
+    // Ajouter act_type et lang comme paramètres de requête
+    uri = uri.replace(queryParameters: {
+      'act_type': actType,
+      'lang': lang
+    });
     
     var request = http.MultipartRequest('POST', uri);
     request.headers.addAll(_getHeaders());
@@ -199,11 +280,33 @@ class ApiService {
       request.files.add(http.MultipartFile.fromBytes(
           'acheteur_id', await acheteur.readAsBytes(),
           filename: acheteur.name));
+      if (carteGriseFront != null) {
+        request.files.add(http.MultipartFile.fromBytes(
+            'carte_grise_front', await carteGriseFront.readAsBytes(),
+            filename: carteGriseFront.name));
+      }
+      if (carteGriseBack != null) {
+        request.files.add(http.MultipartFile.fromBytes(
+            'carte_grise_back', await carteGriseBack.readAsBytes(),
+            filename: carteGriseBack.name));
+      }
+      if (permisOccuper != null) {
+        request.files.add(http.MultipartFile.fromBytes(
+            'permis_occuper', await permisOccuper.readAsBytes(),
+            filename: permisOccuper.name));
+      }
     } else {
-      request.files
-          .add(await http.MultipartFile.fromPath('vendeur_id', vendeur.path));
-      request.files.add(
-          await http.MultipartFile.fromPath('acheteur_id', acheteur.path));
+      request.files.add(await http.MultipartFile.fromPath('vendeur_id', vendeur.path));
+      request.files.add(await http.MultipartFile.fromPath('acheteur_id', acheteur.path));
+      if (carteGriseFront != null) {
+        request.files.add(await http.MultipartFile.fromPath('carte_grise_front', carteGriseFront.path));
+      }
+      if (carteGriseBack != null) {
+        request.files.add(await http.MultipartFile.fromPath('carte_grise_back', carteGriseBack.path));
+      }
+      if (permisOccuper != null) {
+        request.files.add(await http.MultipartFile.fromPath('permis_occuper', permisOccuper.path));
+      }
     }
 
     var streamedResponse = await request.send();
@@ -226,9 +329,12 @@ class ApiService {
 
   /// Complète un acte avec les champs manquants et régénère le PDF.
   static Future<Map<String, dynamic>> completeAct(
-      int documentId, Map<String, String> data) async {
+      int documentId, Map<String, String> data, [String lang = "fr"]) async {
+    var uri = Uri.parse('$baseUrl/id-processing/complete/$documentId');
+    uri = uri.replace(queryParameters: {'lang': lang});
+    
     final response = await http.patch(
-      Uri.parse('$baseUrl/id-processing/complete/$documentId'),
+      uri,
       headers: _getHeaders(true),
       body: json.encode(data),
     );
@@ -245,6 +351,27 @@ class ApiService {
     } catch (_) {}
     
     throw Exception('Erreur lors de la complétion : $errMsg');
+  }
+
+  /// Applique le cachet du notaire (scelle l'acte).
+  static Future<Map<String, dynamic>> sealAct(int documentId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/id-processing/seal/$documentId'),
+      headers: _getHeaders(),
+    );
+    if (response.statusCode == 200) {
+      return json.decode(utf8.decode(response.bodyBytes));
+    }
+
+    String errMsg = response.body;
+    try {
+      final decoded = json.decode(utf8.decode(response.bodyBytes));
+      if (decoded is Map && decoded.containsKey('detail')) {
+        errMsg = decoded['detail'];
+      }
+    } catch (_) {}
+
+    throw Exception('Erreur lors du scellement : $errMsg');
   }
 
   // ── Voice ─────────────────────────────────────────────────────────────────

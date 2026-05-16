@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/api_service.dart';
+import '../providers/language_provider.dart';
 import 'pdf_viewer_screen.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -23,6 +25,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
   }
 
   Future<void> _loadDocuments() async {
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
     try {
       final docs = await ApiService.getDocuments();
       setState(() {
@@ -33,7 +36,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erreur lors du chargement : $e")),
+          SnackBar(content: Text("${lp.translate('error_loading')} : $e")),
         );
       }
     }
@@ -41,19 +44,22 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final lp = Provider.of<LanguageProvider>(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Mes Actes", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(lp.translate('my_acts'), style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFF1A237E),
         foregroundColor: Colors.white,
         actions: [
           IconButton(
             icon: const Icon(Icons.add_circle_outline),
-            tooltip: "Ajouter un Modèle d'Acte",
-            onPressed: () => _showUploadDialog(),
+            tooltip: lp.translate('add_template'),
+            onPressed: () => _showUploadDialog(lp),
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
+            tooltip: lp.translate('refresh'),
             onPressed: _loadDocuments,
           ),
         ],
@@ -71,8 +77,8 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 child: ListTile(
                   leading: const Icon(Icons.description, color: Color(0xFF1A237E), size: 32),
-                  title: Text(doc['title'] ?? "Acte sans titre", style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text("Créé le : ${doc['created_at']?.split('T')[0] ?? 'Inconnu'}"),
+                  title: Text(doc['title'] ?? lp.translate('no_title'), style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text("${lp.translate('created_on')} : ${doc['created_at']?.split('T')[0] ?? '...'}"),
                   trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                   onTap: () {
                     final pdfUrl = doc['pdf_url'];
@@ -87,6 +93,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
                             documentId: doc['id'],
                             missingFields: doc['missing_fields'] != null ? List<String>.from(doc['missing_fields']) : null,
                             actType: doc['act_type'],
+                            status: doc['status'],
                           ),
                         ),
                       );
@@ -99,26 +106,29 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
     );
   }
 
-  void _showUploadDialog() {
-    String actType = "Vente Immobilière";
+  void _showUploadDialog(LanguageProvider lp) {
+    String actType = lp.translate('immobilier');
     
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Ajouter un Modèle d'Acte"),
+        title: Text(lp.translate('add_template')),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text("Choisissez un fichier .pdf ou .docx pour servir de modèle à l'IA."),
+            Text(lp.translate('add_template_desc')),
             const SizedBox(height: 16),
             TextField(
-              decoration: const InputDecoration(labelText: "Type d'acte", hintText: "Ex: Vente, Mariage, etc."),
+              decoration: InputDecoration(
+                labelText: lp.isArabic ? "نوع العقد" : "Type d'acte", 
+                hintText: "Ex: Vente, Mariage, etc."
+              ),
               onChanged: (val) => actType = val,
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Annuler")),
+          TextButton(onPressed: () => Navigator.pop(context), child: Text(lp.translate('cancel'))),
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(context);
@@ -141,13 +151,13 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
                   await ApiService.uploadTemplate(xFile, actType);
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Modèle ajouté avec succès !")),
+                      SnackBar(content: Text(lp.translate('upload_success'))),
                     );
                   }
                 } catch (e) {
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("Erreur lors de l'upload : $e")),
+                      SnackBar(content: Text("${lp.translate('error_upload')} : $e")),
                     );
                   }
                 } finally {
@@ -156,7 +166,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
                 }
               }
             },
-            child: const Text("Choisir un fichier"),
+            child: Text(lp.translate('choose_file')),
           ),
         ],
       ),

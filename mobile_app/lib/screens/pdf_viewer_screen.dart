@@ -3,8 +3,10 @@ import 'package:flutter/foundation.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:http/http.dart' as http;
 import 'dart:typed_data';
-import 'package:mobile_app/services/api_service.dart';
 import 'package:mobile_app/widgets/completion_dialog.dart';
+import 'package:mobile_app/services/api_service.dart';
+import 'package:provider/provider.dart';
+import 'package:mobile_app/providers/language_provider.dart';
 
 class PdfViewerScreen extends StatefulWidget {
   final String pdfUrl;
@@ -12,6 +14,7 @@ class PdfViewerScreen extends StatefulWidget {
   final int? documentId;
   final List<String>? missingFields;
   final String? actType;
+  final String? status;
 
   const PdfViewerScreen({
     super.key,
@@ -20,6 +23,7 @@ class PdfViewerScreen extends StatefulWidget {
     this.documentId,
     this.missingFields,
     this.actType,
+    this.status,
   });
 
   @override
@@ -32,11 +36,13 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   String? _errorMessage;
   final PdfViewerController _pdfController = PdfViewerController();
   List<String>? _currentMissingFields;
+  String? _currentStatus;
 
   @override
   void initState() {
     super.initState();
     _currentMissingFields = widget.missingFields;
+    _currentStatus = widget.status;
     _fetchPdf();
   }
 
@@ -51,9 +57,15 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
       if (kDebugMode) print("DEBUG PDF VIEWER: Fetching '$cleanUrl'");
 
-      final response = await http.get(Uri.parse(cleanUrl)).timeout(
+      final response = await http.get(
+        Uri.parse(cleanUrl),
+        headers: ApiService.token != null ? {'Authorization': 'Bearer ${ApiService.token}'} : {},
+      ).timeout(
         const Duration(seconds: 30),
-        onTimeout: () => throw Exception("Délai d'attente dépassé"),
+        onTimeout: () {
+          final lp = Provider.of<LanguageProvider>(context, listen: false);
+          throw Exception(lp.translate('timeout'));
+        },
       );
 
       if (response.statusCode == 200) {
@@ -62,9 +74,10 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
           _isLoading = false;
         });
       } else {
+        final lp = Provider.of<LanguageProvider>(context, listen: false);
         setState(() {
           _errorMessage =
-              "Erreur serveur ${response.statusCode} : Impossible de charger le PDF.";
+              "${lp.translate('fail')} ${response.statusCode} : ${lp.translate('pdf_error_fetch')}.";
           _isLoading = false;
         });
       }
@@ -79,6 +92,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   Future<void> _handleCompletion() async {
     if (widget.documentId == null || _currentMissingFields == null || _currentMissingFields!.isEmpty) return;
 
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
     final fieldKeys = CompletionDialog.getFieldKeys();
     final Map<String, TextEditingController> controllers = {};
     for (final field in _currentMissingFields!) {
@@ -89,7 +103,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
     if (controllers.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Aucun champ compatible trouvé pour la complétion.")),
+        SnackBar(content: Text(lp.isArabic ? "لم يتم العثور على حقول متوافقة للإكمال." : "Aucun champ compatible trouvé pour la complétion.")),
       );
       return;
     }
@@ -112,7 +126,8 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       });
 
       try {
-        final completed = await ApiService.completeAct(widget.documentId!, result);
+        final lang = Provider.of<LanguageProvider>(context, listen: false).currentLocale.languageCode;
+        final completed = await ApiService.completeAct(widget.documentId!, result, lang);
         final remaining = List<String>.from(completed['missing_fields'] ?? []);
         
         setState(() {
@@ -126,15 +141,67 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(remaining.isEmpty 
-                ? "Acte finalisé avec succès !" 
-                : "Acte mis à jour. ${remaining.length} champ(s) restant(s)."),
+                ? lp.translate('complete_success') 
+                : "${lp.translate('complete_update')} ${remaining.length} ${lp.translate('fields_left')}"),
               backgroundColor: remaining.isEmpty ? Colors.green : Colors.orange,
             ),
           );
         }
       } catch (e) {
         setState(() {
-          _errorMessage = "Erreur lors de la complétion : $e";
+          _errorMessage = "${lp.isArabic ? "خطأ أثناء الإكمال" : "Erreur lors de la complétion"} : $e";
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleSeal() async {
+    if (widget.documentId == null) return;
+
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(lp.translate('seal_q')),
+        content: Text(
+          lp.translate('seal_desc'),
+          style: const TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(lp.translate('cancel'))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0D1B4B), foregroundColor: Colors.white),
+            child: Text(lp.translate('seal_button')),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      setState(() {
+        _isLoading = true;
+      });
+
+      try {
+        await ApiService.sealAct(widget.documentId!);
+        setState(() {
+          _currentStatus = 'scelle';
+          _isLoading = false;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(lp.translate('seal_success')),
+              backgroundColor: Colors.indigo,
+            ),
+          );
+        }
+      } catch (e) {
+        setState(() {
+          _errorMessage = "Erreur lors du scellement : $e";
           _isLoading = false;
         });
       }
@@ -142,6 +209,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   }
 
   void _openInBrowser() {
+
     // Compatible web et mobile
     if (kIsWeb) {
       // ignore: avoid_web_libraries_in_flutter
@@ -153,17 +221,18 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   }
 
   void _launchUrl(String url) {
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
     // On web, on utilise url_launcher si disponible
     // Pour l'instant on affiche l'URL
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("Lien PDF"),
+        title: Text(lp.translate('open_link')),
         content: SelectableText(url),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text("Fermer"))
+              child: Text(lp.isArabic ? "إغلاق" : "Fermer"))
         ],
       ),
     );
@@ -171,6 +240,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final lp = Provider.of<LanguageProvider>(context);
     bool hasMissing = (_currentMissingFields != null && _currentMissingFields!.isNotEmpty);
 
     return Scaffold(
@@ -193,34 +263,51 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
           ],
         ),
         actions: [
-          if (!_isLoading && hasMissing)
+          if (!_isLoading && _currentStatus != 'scelle') ...[
+            if (hasMissing)
+              TextButton.icon(
+                onPressed: _handleCompletion,
+                icon: const Icon(Icons.edit_note, color: Colors.amber),
+                label: Text(lp.translate('complete'), style: const TextStyle(color: Colors.white, fontSize: 13)),
+              ),
             TextButton.icon(
-              onPressed: _handleCompletion,
-              icon: const Icon(Icons.edit_note, color: Colors.amber),
-              label: const Text("Compléter", style: TextStyle(color: Colors.white, fontSize: 13)),
+              onPressed: _handleSeal,
+              icon: const Icon(Icons.verified, color: Colors.lightBlueAccent),
+              label: Text(lp.isArabic ? "ختم" : "Sceller", style: const TextStyle(color: Colors.white, fontSize: 13)),
+            ),
+          ],
+          if (_currentStatus == 'scelle')
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Chip(
+                label: Text(lp.translate('sealed'), style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                backgroundColor: Colors.green,
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+              ),
             ),
           if (!_isLoading && _pdfBytes != null) ...[
             IconButton(
               icon: const Icon(Icons.zoom_in),
-              tooltip: "Zoom avant",
+              tooltip: lp.translate('zoom_in'),
               onPressed: () => _pdfController.zoomLevel =
                   (_pdfController.zoomLevel + 0.25).clamp(0.5, 3.0),
             ),
             IconButton(
               icon: const Icon(Icons.zoom_out),
-              tooltip: "Zoom arrière",
+              tooltip: lp.translate('zoom_out'),
               onPressed: () => _pdfController.zoomLevel =
                   (_pdfController.zoomLevel - 0.25).clamp(0.5, 3.0),
             ),
           ],
           IconButton(
             icon: const Icon(Icons.open_in_new),
-            tooltip: "Ouvrir le lien",
+            tooltip: lp.translate('open_link'),
             onPressed: _openInBrowser,
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: "Recharger",
+            tooltip: lp.translate('refresh'),
             onPressed: () {
               setState(() {
                 _isLoading = true;
@@ -233,14 +320,14 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         ],
       ),
       body: _isLoading
-          ? _buildLoadingState()
+          ? _buildLoadingState(lp)
           : _errorMessage != null
-              ? _buildErrorState()
-              : _buildPdfViewer(),
+              ? _buildErrorState(lp)
+              : _buildPdfViewer(lp),
     );
   }
 
-  Widget _buildLoadingState() {
+  Widget _buildLoadingState(LanguageProvider lp) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -250,13 +337,13 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             strokeWidth: 3,
           ),
           const SizedBox(height: 20),
-          const Text(
-            "Chargement du PDF…",
-            style: TextStyle(color: Colors.blueGrey, fontSize: 14),
+          Text(
+            lp.translate('pdf_loading'),
+            style: const TextStyle(color: Colors.blueGrey, fontSize: 14),
           ),
           const SizedBox(height: 8),
           Text(
-            "Document en cours de récupération",
+            lp.translate('pdf_fetch'),
             style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
           ),
         ],
@@ -264,7 +351,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     );
   }
 
-  Widget _buildErrorState() {
+  Widget _buildErrorState(LanguageProvider lp) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -281,16 +368,16 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                   color: Colors.red.shade400, size: 48),
             ),
             const SizedBox(height: 20),
-            const Text(
-              "Impossible de charger le PDF",
-              style: TextStyle(
+            Text(
+              lp.translate('pdf_error_fetch'),
+              style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 16,
                   color: Color(0xFF0D1B4B)),
             ),
             const SizedBox(height: 8),
             Text(
-              _errorMessage ?? "Erreur inconnue",
+              _errorMessage ?? lp.translate('fail'),
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.grey, fontSize: 13),
             ),
@@ -305,7 +392,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                 _fetchPdf();
               },
               icon: const Icon(Icons.refresh, size: 16),
-              label: const Text("Réessayer"),
+              label: Text(lp.translate('retry')),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0D1B4B),
                 foregroundColor: Colors.white,
@@ -319,7 +406,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             OutlinedButton.icon(
               onPressed: _openInBrowser,
               icon: const Icon(Icons.open_in_new, size: 16),
-              label: const Text("Voir l'URL"),
+              label: Text(lp.translate('open_link')),
               style: OutlinedButton.styleFrom(
                 side: const BorderSide(color: Color(0xFF0D1B4B)),
                 shape: RoundedRectangleBorder(
@@ -334,7 +421,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     );
   }
 
-  Widget _buildPdfViewer() {
+  Widget _buildPdfViewer(LanguageProvider lp) {
     return SfPdfViewer.memory(
       _pdfBytes!,
       controller: _pdfController,
@@ -342,7 +429,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       onDocumentLoadFailed: (PdfDocumentLoadFailedDetails details) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Erreur d'affichage : ${details.error}"),
+            content: Text("${lp.isArabic ? "خطأ في العرض" : "Erreur d'affichage"} : ${details.error}"),
             backgroundColor: Colors.red,
           ),
         );

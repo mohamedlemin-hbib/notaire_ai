@@ -1,36 +1,41 @@
-from sqlalchemy import create_engine, text
 import sys
+import os
+from sqlalchemy import create_engine, text
+
+# Ajouter le chemin du backend pour importer les settings
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from app.core.config import settings
 
 def fix_enum():
-    DATABASE_URL = "postgresql://postgres:MO46%22%22@localhost:5432/notaire_db"
-    # We add both cases to be 100% safe
-    new_values = [
-        'vente_immobilier', 'vente_vehicule', 'vente_societe', 'mariage',
-        'VENTE_IMMOBILIER', 'VENTE_VEHICULE', 'VENTE_SOCIETE', 'MARIAGE'
-    ]
+    engine = create_engine(settings.DATABASE_URL)
     
-    engine = create_engine(DATABASE_URL)
+    # Liste des nouveaux types d'actes à ajouter
+    new_types = ["hypotheque", "HYPOTHEQUE", "testament", "TESTAMENT", "mariage", "MARIAGE", "procuration", "PROCURATION", "vente_vehicule", "vente_societe", "vente_immobilier"]
     
-    try:
-        with engine.connect() as conn:
-            conn.execution_options(isolation_level="AUTOCOMMIT")
+    # On utilise AUTOCOMMIT car ALTER TYPE ADD VALUE ne peut pas être dans une transaction
+    with engine.execution_options(isolation_level="AUTOCOMMIT").connect() as conn:
+        print("Vérification des types existants dans l'énumération 'acttype'...")
+        try:
+            # Récupérer les valeurs actuelles de l'énumération
+            result = conn.execute(text("SELECT enumlabel FROM pg_enum JOIN pg_type ON pg_enum.enumtypid = pg_type.oid WHERE pg_type.typname = 'acttype'"))
+            existing_types = [row[0] for row in result]
+            print(f"Types actuels : {existing_types}")
             
-            # Check existing values
-            result = conn.execute(text("SELECT enum_range(NULL::acttype)"))
-            existing_values = result.fetchone()[0]
-            print(f"Existing values in DB enum 'acttype': {existing_values}")
-            
-            for val in new_values:
-                if val not in existing_values:
-                    print(f"Adding value: {val}")
-                    conn.execute(text(f"ALTER TYPE acttype ADD VALUE '{val}'"))
+            # Ajouter les types manquants
+            for t in new_types:
+                if t not in existing_types:
+                    print(f"Ajout du type : {t}")
+                    try:
+                        conn.execute(text(f"ALTER TYPE acttype ADD VALUE '{t}'"))
+                        print(f"Succès : {t} ajouté.")
+                    except Exception as e:
+                        print(f"Erreur lors de l'ajout de {t} : {e}")
                 else:
-                    print(f"Value '{val}' already exists.")
-            
-            print("Database Enum 'acttype' updated successfully with all cases!")
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+                    print(f"Le type {t} existe déjà.")
+                    
+        except Exception as e:
+            print(f"Erreur lors de la lecture des types : {e}")
+            print("Tentative de création de l'énumération si elle n'existe pas (attention, ceci est risqué si elle existe déjà)...")
 
 if __name__ == "__main__":
     fix_enum()

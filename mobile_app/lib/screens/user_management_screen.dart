@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/api_service.dart';
+import '../providers/language_provider.dart';
 import 'add_user_screen.dart';
 
 class UserManagementScreen extends StatefulWidget {
@@ -20,6 +22,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   }
 
   Future<void> _fetchUsers() async {
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
     setState(() => _isLoading = true);
     try {
       final users = await ApiService.getUsers();
@@ -27,7 +30,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erreur lors de la récupération des utilisateurs: $e")),
+          SnackBar(content: Text("${lp.translate('error_fetching_users')}: $e")),
         );
       }
     } finally {
@@ -36,12 +39,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   }
 
   Future<void> _deleteUser(int userId) async {
+    final lp = Provider.of<LanguageProvider>(context, listen: false);
     try {
       final success = await ApiService.deleteUser(userId);
       if (success) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Utilisateur désactivé.")),
+            SnackBar(content: Text(lp.translate('user_deactivated'))),
           );
           _fetchUsers();
         }
@@ -57,9 +61,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final lp = Provider.of<LanguageProvider>(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Gestion des Notaires"),
+        title: Text(lp.translate('manage_users')),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -70,7 +76,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _users.isEmpty
-              ? const Center(child: Text("Aucun notaire trouvé."))
+              ? Center(child: Text(lp.translate('no_notary_found')))
               : ListView.builder(
                   itemCount: _users.length,
                   itemBuilder: (context, index) {
@@ -97,7 +103,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                             ),
                             IconButton(
                               icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => _confirmDelete(user['id']),
+                              onPressed: () => _confirmDelete(user['id'], lp),
                             ),
                           ],
                         ),
@@ -112,20 +118,21 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     );
   }
 
-  void _confirmDelete(int userId) {
+  void _confirmDelete(int userId, LanguageProvider lp) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Confirmer la désactivation"),
-        content: const Text("Voulez-vous vraiment désactiver ce notaire ?"),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(lp.translate('confirm_deactivation')),
+        content: Text(lp.translate('confirm_deactivation_desc')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Annuler")),
+          TextButton(onPressed: () => Navigator.pop(context), child: Text(lp.translate('cancel'))),
           TextButton(
             onPressed: () {
               Navigator.pop(context);
               _deleteUser(userId);
             },
-            child: const Text("Désactiver", style: TextStyle(color: Colors.red)),
+            child: Text(lp.translate('deactivate'), style: const TextStyle(color: Colors.red)),
           ),
         ],
       ),
